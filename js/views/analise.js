@@ -86,7 +86,7 @@ export function seccaoAnaliseCliente(sec, c, estado = {}) {
       <p class="ajuda">Comparação com a baseline: abre a última avaliação no separador <a href="#/cliente/${c.id}?tab=avaliacoes">Avaliações</a>.</p>
     </div>
 
-    <div class="cartao"><h3>Gráficos</h3>
+    <div class="cartao cartao-graficos"><h3>Gráficos</h3>
       ${e1rm.length ? html`
         <label class="campo"><span>Exercício</span><select id="sel-ex">${e1rm.map((x) => html`<option value="${x.exercicio_id}" ${x === exSel ? raw('selected') : ''}>${x.nome} (${x.pontos.length})</option>`)}</select></label>
         ${blocoGrafico('g-e1rm', `1RM estimado · ${exSel.nome}`, {

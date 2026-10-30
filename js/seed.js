@@ -9,6 +9,7 @@ import { registarSessao } from './repo-sessoes.js';
 import { guardarTipoPacote, guardarPacote, guardarPagamento } from './repo-pacotes.js';
 import { agendar, remarcar } from './repo-agenda.js';
 import { adicionarFoto } from './repo-fotos.js';
+import { PADROES_V2, EXERCICIOS_V2, RESISTENCIA_V2, ALTERNATIVAS_V2 } from './biblioteca-v2.js';
 
 const PADROES = [
   'Joelho dominante', 'Anca dominante', 'Empurrar horizontal', 'Empurrar vertical', 'Puxar horizontal',
@@ -88,23 +89,41 @@ const ALTERNATIVAS = {
   'Intervalos de corrida': ['Bike', 'SkiErg', 'Remo ergómetro'],
 };
 
-// Corre uma única vez por base de dados (mesmo que depois apagues exercícios).
+// Insere padrões, exercícios e alternativas que ainda NÃO existam (pelo nome).
+// Nunca altera nem apaga exercícios existentes (podem ter sido editados pelo treinador).
+function aplicarBiblioteca(padroes, exercicios, resistencia, alternativas) {
+  for (const p of padroes) executar('INSERT OR IGNORE INTO padroes_movimento (nome) VALUES (?)', [p]);
+  const pid = Object.fromEntries(todos('SELECT id, nome FROM padroes_movimento').map((p) => [p.nome, p.id]));
+  for (const [nome, categoria, grupo, padrao, notas] of exercicios) {
+    const resist = nome in resistencia;
+    executar(
+      'INSERT OR IGNORE INTO exercicios (nome, categoria, grupo_muscular, padrao_id, notas_tecnicas, tipo_registo, unidade_ritmo) VALUES (?,?,?,?,?,?,?)',
+      [nome, categoria, grupo, padrao ? pid[padrao] : null, notas || null, resist ? 'resistencia' : 'forca', resist ? resistencia[nome] : null]
+    );
+  }
+  const eid = Object.fromEntries(todos('SELECT id, nome FROM exercicios').map((e) => [e.nome, e.id]));
+  for (const [ex, alts] of Object.entries(alternativas))
+    for (const a of alts) if (eid[ex] && eid[a]) executar('INSERT OR IGNORE INTO exercicio_alternativas VALUES (?, ?)', [eid[ex], eid[a]]);
+}
+
+// Versões da biblioteca: cada uma corre UMA vez por base de dados (mesmo que depois apagues exercícios).
+// v1 = biblioteca inicial · v2 = expansão (≈ 160 exercícios novos).
 export function garantirBiblioteca() {
-  if (lerDefinicao('biblioteca_inicial')) return;
+  let versao = lerDefinicao('biblioteca_versao') ?? (lerDefinicao('biblioteca_inicial') ? 1 : 0);
+  if (versao >= 2) return;
   transacao(() => {
-    for (const p of PADROES) executar('INSERT OR IGNORE INTO padroes_movimento (nome) VALUES (?)', [p]);
-    const pid = Object.fromEntries(todos('SELECT id, nome FROM padroes_movimento').map((p) => [p.nome, p.id]));
-    for (const [nome, categoria, grupo, padrao, notas] of EXERCICIOS) {
-      const resist = nome in REGISTO_RESISTENCIA;
-      executar(
-        'INSERT OR IGNORE INTO exercicios (nome, categoria, grupo_muscular, padrao_id, notas_tecnicas, tipo_registo, unidade_ritmo) VALUES (?,?,?,?,?,?,?)',
-        [nome, categoria, grupo, padrao ? pid[padrao] : null, notas || null, resist ? 'resistencia' : 'forca', resist ? REGISTO_RESISTENCIA[nome] : null]
-      );
+    if (versao < 1) {
+      aplicarBiblioteca(PADROES, EXERCICIOS, REGISTO_RESISTENCIA, ALTERNATIVAS);
+      gravarDefinicao('biblioteca_inicial', true);
+      versao = 1;
     }
-    const eid = Object.fromEntries(todos('SELECT id, nome FROM exercicios').map((e) => [e.nome, e.id]));
-    for (const [ex, alts] of Object.entries(ALTERNATIVAS))
-      for (const a of alts) executar('INSERT OR IGNORE INTO exercicio_alternativas VALUES (?, ?)', [eid[ex], eid[a]]);
-    gravarDefinicao('biblioteca_inicial', true);
+    aplicarBiblioteca(PADROES_V2, EXERCICIOS_V2, RESISTENCIA_V2, ALTERNATIVAS_V2);
+    // O "Curl femoral" da v1 não tinha padrão: passa a "Isolamento membros inferiores" se continuar sem padrão.
+    executar(
+      `UPDATE exercicios SET padrao_id = (SELECT id FROM padroes_movimento WHERE nome = 'Isolamento membros inferiores')
+       WHERE nome = 'Curl femoral' AND padrao_id IS NULL`
+    );
+    gravarDefinicao('biblioteca_versao', 2);
   });
 }
 

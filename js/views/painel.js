@@ -96,6 +96,7 @@ export function vistaPainel(el) {
       <a class="kpi" href="#/pagamentos"><span>${pacotesRenovar}</span>pacotes a renovar</a>
       <div class="kpi"><span>${reavAtraso}</span>reavaliações em atraso</div>
     </div>
+    <div class="painel-grelha">
     <div class="cartao">
       <div class="cartao-cab"><h3>Resumo da semana</h3><a class="btn btn-sec btn-peq" href="#/resumos">Resumos para clientes ›</a></div>
       <ul class="resumo-semana">
@@ -129,6 +130,7 @@ export function vistaPainel(el) {
               <div class="item-tags">${motivos.map(([t, cls, tab]) => html`<a href="#/cliente/${c.id}?tab=${tab}">${etiqueta(t, cls)}</a>`)}</div></div></li>`
           )}</ul>`
         : clientes.length ? html`<p class="ajuda">Tudo em dia. 👍</p>` : vazio('Ainda sem clientes.', '<a class="btn" href="#/clientes">Ir para Clientes</a>')}
+    </div>
     </div>
     <p class="centro"><a href="#/pagamentos">Pagamentos e resumo mensal ›</a></p>`;
 

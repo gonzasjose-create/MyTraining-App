@@ -1,8 +1,9 @@
 // Lista de clientes com pesquisa.
 import { listarClientes } from '../repo.js';
-import { html, data } from '../util.js';
+import { html, data, normalizar } from '../util.js';
 import { cabecalho, etiqueta, vazio } from './ui.js';
 import { carregarDadosExemplo } from '../seed.js';
+import { dialogoIniciarTreino } from './sessoes.js';
 
 export function perfilTags(c) {
   return html`${c.perfil_forca ? etiqueta('Força', 'tag-forca') : ''}${c.perfil_resistencia ? etiqueta('Resistência', 'tag-resist') : ''}`;
@@ -18,7 +19,7 @@ export function vistaClientes(el, { inativos }) {
       ? html`<input type="search" class="pesquisa" placeholder="Pesquisar cliente…" aria-label="Pesquisar">
         <ul class="lista" id="lista">
           ${clientes.map(
-            (c) => html`<li data-nome="${c.nome.toLowerCase()}">
+            (c) => html`<li data-nome="${normalizar(c.nome)}" class="item-com-acao">
               <a href="#/cliente/${c.id}" class="item">
                 <div class="item-principal">
                   <strong>${c.nome}</strong>${c.ativo ? '' : etiqueta('Inativo')}
@@ -26,6 +27,7 @@ export function vistaClientes(el, { inativos }) {
                 </div>
                 <div class="item-sec">${c.idade} anos<br><small>Últ. avaliação: ${data(c.ultima_avaliacao)}</small></div>
               </a>
+              ${c.ativo ? html`<button class="btn-linha" data-iniciar="${c.id}" aria-label="Iniciar treino com ${c.nome}" title="Iniciar treino">▶</button>` : ''}
             </li>`
           )}
         </ul>
@@ -38,9 +40,10 @@ export function vistaClientes(el, { inativos }) {
   `;
 
   el.querySelector('.pesquisa')?.addEventListener('input', (e) => {
-    const q = e.target.value.trim().toLowerCase();
+    const q = normalizar(e.target.value.trim());
     el.querySelectorAll('#lista li').forEach((li) => (li.hidden = !li.dataset.nome.includes(q)));
   });
+  el.querySelectorAll('[data-iniciar]').forEach((b) => (b.onclick = () => dialogoIniciarTreino({ clienteId: +b.dataset.iniciar })));
   el.querySelector('#exemplo')?.addEventListener('click', async (e) => {
     e.target.disabled = true;
     e.target.textContent = 'A carregar…';

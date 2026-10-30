@@ -2,8 +2,8 @@
 import * as rp from '../repo-planos.js';
 import { listarPadroes } from '../repo.js';
 import { escalar } from '../db.js';
-import { CATEGORIAS_EXERCICIO } from '../catalogos.js';
-import { html, raw, Validador, mostrarErros, lerForm, aviso } from '../util.js';
+import { CATEGORIAS_EXERCICIO, FAMILIAS_GRUPO, familiaDe } from '../catalogos.js';
+import { html, raw, Validador, mostrarErros, lerForm, aviso, normalizar } from '../util.js';
 import { cabecalho, etiqueta, dialogo, confirmar, campo, vazio } from './ui.js';
 import { dialogoNovoPlano } from './planos.js';
 
@@ -22,48 +22,68 @@ export function vistaTreino(el, { tab = 'exercicios' }) {
 
 // ---------------------------------------------------------------- Biblioteca
 function exercicios(sec, recarregar) {
-  const lista = rp.listarBiblioteca({ incluirInativos: true });
+  const lista = rp.listarBiblioteca({ incluirInativos: true }).map((e) => ({ ...e, familia: familiaDe(e.grupo_muscular) }));
   const padroes = listarPadroes();
+  const familias = [...FAMILIAS_GRUPO.map(([f]) => f), 'Outros'].filter((f) => lista.some((e) => e.familia === f));
+  let familia = '';
 
   sec.innerHTML = html`
     <div class="barra-filtros">
-      <input type="search" id="q" placeholder="Pesquisar exercício…" aria-label="Pesquisar">
-      <select id="f-padrao" aria-label="Filtrar por padrão">
-        <option value="">Todos os padrões</option>
+      <input type="search" id="q" placeholder="Pesquisar exercício…" aria-label="Pesquisar exercício">
+      <button class="btn" id="novo" aria-label="Novo exercício">+ Novo</button>
+    </div>
+    <div class="chips chips-rolar" role="group" aria-label="Filtrar por grupo muscular">
+      <button type="button" class="chip ativo" data-familia="">Todos <small>${lista.filter((e) => e.ativo).length}</small></button>
+      ${familias.map((f) => html`<button type="button" class="chip" data-familia="${f}">${f} <small>${lista.filter((e) => e.ativo && e.familia === f).length}</small></button>`)}
+    </div>
+    <details class="mais-filtros"><summary>Mais filtros</summary>
+      <select id="f-padrao" aria-label="Filtrar por padrão de movimento">
+        <option value="">Todos os padrões de movimento</option>
         ${padroes.map((p) => html`<option value="${p.id}">${p.nome}</option>`)}
       </select>
-      <button class="btn" id="novo">+ Exercício</button>
+      <label class="campo-check"><input type="checkbox" id="f-inativos"> Mostrar inativos</label>
+    </details>
+    <div id="lista">
+      ${familias.map((f) => html`<section class="grupo-lista" data-grupo="${f}">
+        <h3 class="grupo-titulo">${f}</h3>
+        <ul class="lista">${lista.filter((e) => e.familia === f).map(
+          (e) => html`<li data-texto="${normalizar(`${e.nome} ${e.grupo_muscular || ''} ${e.padrao_nome || ''} ${e.categoria || ''}`)}" data-padrao="${e.padrao_id ?? ''}" data-familia="${f}" data-ativo="${e.ativo}" ${e.ativo ? '' : raw('hidden')}>
+            <button class="item item-botao item-compacto" data-id="${e.id}">
+              <div class="item-principal"><strong>${e.nome}</strong>
+                ${e.tipo_registo === 'resistencia' ? etiqueta('duração/zona', 'tag-resist') : ''}${e.ativo ? '' : etiqueta('Inativo', 'tag-aviso')}
+                <small class="item-linha2">${[e.grupo_muscular, e.padrao_nome, e.n_alternativas ? `${e.n_alternativas} alternativa(s)` : ''].filter(Boolean).join(' · ')}</small></div>
+              <span class="item-sec" aria-hidden="true">›</span>
+            </button>
+          </li>`
+        )}</ul></section>`)}
+      <p class="ajuda centro" id="sem-resultados" hidden>Nenhum exercício encontrado.</p>
     </div>
-    <label class="campo-check"><input type="checkbox" id="f-inativos"> Mostrar inativos</label>
-    <ul class="lista" id="lista">
-      ${lista.map(
-        (e) => html`<li data-nome="${e.nome.toLowerCase()}" data-padrao="${e.padrao_id ?? ''}" data-ativo="${e.ativo}" ${e.ativo ? '' : raw('hidden')}>
-          <button class="item item-botao" data-id="${e.id}">
-            <div class="item-principal"><strong>${e.nome}</strong>
-              <div class="item-tags">
-                ${e.categoria ? etiqueta(e.categoria) : ''}
-                ${e.tipo_registo === 'resistencia' ? etiqueta('duração/zona', 'tag-resist') : ''}
-                ${e.padrao_nome ? etiqueta(e.padrao_nome, 'tag-forca') : ''}
-                ${e.ativo ? '' : etiqueta('Inativo', 'tag-aviso')}
-              </div></div>
-            <div class="item-sec"><small>${e.grupo_muscular || ''}${e.n_alternativas ? raw(`<br>${e.n_alternativas} alternativa(s)`) : ''}</small></div>
-          </button>
-        </li>`
-      )}
-    </ul>
     <p class="ajuda centro">${lista.length} exercícios na biblioteca.</p>`;
 
   const filtrar = () => {
-    const q = sec.querySelector('#q').value.trim().toLowerCase();
+    const q = normalizar(sec.querySelector('#q').value.trim());
     const p = sec.querySelector('#f-padrao').value;
     const inat = sec.querySelector('#f-inativos').checked;
-    sec.querySelectorAll('#lista li').forEach((li) => {
-      li.hidden = !li.dataset.nome.includes(q) || (p && li.dataset.padrao !== p) || (!inat && li.dataset.ativo === '0');
+    let total = 0;
+    sec.querySelectorAll('.grupo-lista').forEach((g) => {
+      let n = 0;
+      g.querySelectorAll('li').forEach((li) => {
+        li.hidden = (q && !li.dataset.texto.includes(q)) || (p && li.dataset.padrao !== p) || (!inat && li.dataset.ativo === '0') || (familia && li.dataset.familia !== familia);
+        if (!li.hidden) n++;
+      });
+      g.hidden = n === 0;
+      total += n;
     });
+    sec.querySelector('#sem-resultados').hidden = total > 0;
   };
   sec.querySelector('#q').oninput = filtrar;
   sec.querySelector('#f-padrao').onchange = filtrar;
   sec.querySelector('#f-inativos').onchange = filtrar;
+  sec.querySelectorAll('.chips [data-familia]').forEach((b) => (b.onclick = () => {
+    familia = b.dataset.familia;
+    sec.querySelectorAll('.chips [data-familia]').forEach((x) => x.classList.toggle('ativo', x === b));
+    filtrar();
+  }));
   sec.querySelector('#novo').onclick = () => dialogoExercicio(null, recarregar);
   sec.querySelectorAll('[data-id]').forEach((b) => (b.onclick = () => dialogoExercicio(+b.dataset.id, recarregar)));
 }
@@ -137,8 +157,8 @@ export function dialogoExercicio(id, depois) {
   form.padrao_id.onchange = form.tipo_registo.onchange = sync;
   sync();
   d.querySelector('#q-alt').oninput = (ev) => {
-    const q = ev.target.value.trim().toLowerCase();
-    d.querySelectorAll('#alts label').forEach((l) => (l.hidden = !l.dataset.nome.includes(q)));
+    const q = normalizar(ev.target.value.trim());
+    d.querySelectorAll('#alts label').forEach((l) => (l.hidden = !normalizar(l.dataset.nome).includes(q)));
   };
   d.querySelector('#remover')?.addEventListener('click', async () => {
     d.fechar();

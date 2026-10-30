@@ -168,7 +168,10 @@ function desenharVivo(el, s, render) {
     ${s.tipo === 'reavaliacao'
       ? blocoReavaliacao(s)
       : html`<div class="vivo-lista">
-          ${s.exercicios.map((e) => (e.id === ui.sexAtual ? cartaoAtual(s, e, cfg) : cartaoFechado(s, e)))}
+          ${s.exercicios.map((e) => (e.id === ui.sexAtual
+            // No tablet, o exercício atual aparece também na lista da esquerda (marcado) e o cartão à direita.
+            ? html`${cartaoFechado(s, e, true)}${cartaoAtual(s, e, cfg)}`
+            : cartaoFechado(s, e)))}
           ${s.exercicios.length ? '' : html`<p class="ajuda centro">Sessão livre: acrescenta os exercícios à medida que avanças.</p>`}
         </div>
         <button class="btn btn-sec btn-largo" data-acao="add-ex">+ Acrescentar exercício</button>`}
@@ -202,10 +205,10 @@ const textoSerie = (x) =>
 const textoPlano = (x) =>
   x.plan_texto || [x.plan_carga_kg != null ? `${num(x.plan_carga_kg)} kg` : null, x.plan_reps != null ? `× ${x.plan_reps}` : null, x.plan_rpe != null ? `RPE ${num(x.plan_rpe)}` : null].filter(Boolean).join(' ');
 
-function cartaoFechado(s, e) {
+function cartaoFechado(s, e, marcador = false) {
   const f = e.series.filter((x) => x.estado === 'feita').length;
-  const icone = e.estado === 'feito' ? '✓' : e.estado === 'saltado' ? '—' : '○';
-  return html`<button class="ex-fechado estado-${e.estado}" data-acao="selecionar" data-sex="${e.id}">
+  const icone = marcador ? '▶' : e.estado === 'feito' ? '✓' : e.estado === 'saltado' ? '—' : '○';
+  return html`<button class="ex-fechado estado-${e.estado} ${marcador ? 'ex-marcador' : ''}" data-acao="selecionar" data-sex="${e.id}" ${marcador ? raw('aria-current="true"') : ''}>
     <span class="ex-icone">${icone}</span><span class="ex-nome">${e.nome}</span><span class="ex-cont">${f}/${e.series.length}</span>
   </button>`;
 }

@@ -160,6 +160,20 @@ export const TIPOS_SESSAO = { treino: 'Treino do plano', livre: 'Sessão livre',
 export const ESTADOS_SESSAO = { agendada: 'Agendada', em_curso: 'Em curso', realizada: 'Realizada', faltou: 'Faltou', cancelada: 'Cancelada' };
 export const METODOS_PAGAMENTO = ['MB WAY', 'Transferência', 'Numerário', 'Multibanco', 'Outro'];
 
+// ---------- Famílias de grupos musculares (filtros rápidos da biblioteca) ----------
+export const FAMILIAS_GRUPO = [
+  ['Pernas', ['Quadríceps', 'Posterior / glúteos', 'Gémeos', 'Adutores / abdutores']],
+  ['Peito', ['Peito']],
+  ['Costas', ['Costas', 'Trapézio']],
+  ['Ombros', ['Ombros']],
+  ['Braços', ['Bíceps', 'Tríceps', 'Antebraço / pega']],
+  ['Core', ['Core']],
+  ['Corpo inteiro', ['Corpo inteiro']],
+  ['Cardio', ['Cardio']],
+  ['Mobilidade', ['Mobilidade']],
+];
+export const familiaDe = (grupo) => FAMILIAS_GRUPO.find(([, gs]) => gs.includes(grupo))?.[0] ?? 'Outros';
+
 // ---------- Planeamento (Fase 2) ----------
 export const CATEGORIAS_EXERCICIO = ['força', 'potência', 'resistência', 'core', 'mobilidade'];
 export const DIAS_SEMANA = { 1: 'Segunda', 2: 'Terça', 3: 'Quarta', 4: 'Quinta', 5: 'Sexta', 6: 'Sábado', 7: 'Domingo' };

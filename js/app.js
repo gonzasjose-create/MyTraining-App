@@ -78,6 +78,9 @@ function resolver() {
 
 // Uma vista pode devolver uma função de limpeza (ex.: Modo Treino pára relógios e liberta o ecrã).
 let limpeza = null;
+// Posição de scroll por endereço (listas e ficha do cliente).
+const posicoes = new Map();
+const RESTAURAR_POSICAO = /^#\/(clientes|treino|agenda|resumos|pagamentos|cliente\/\d+)(\?|$)/;
 
 function render() {
   const main = document.getElementById('app');
@@ -104,6 +107,9 @@ function render() {
   }
   try {
     limpeza = r.vista(main, r.params);
+    // Ao regressar a uma lista, repõe a posição onde estavas.
+    const y = RESTAURAR_POSICAO.test(location.hash) ? posicoes.get(location.hash) : null;
+    if (y) requestAnimationFrame(() => window.scrollTo(0, y));
   } catch (e) {
     console.error(e);
     main.innerHTML = `<div class="caixa caixa-erro"><strong>Ocorreu um erro.</strong><p>${esc(e.message)}</p></div>`;
@@ -137,7 +143,10 @@ async function arrancar() {
   garantirBiblioteca();
   limparFotosOrfas();
   aplicarTema();
-  window.addEventListener('hashchange', render);
+  window.addEventListener('hashchange', (ev) => {
+    try { posicoes.set(new URL(ev.oldURL).hash || '#/', window.scrollY); } catch { /* ignorar */ }
+    render();
+  });
   render();
   // PIN de arranque (opcional) por cima de tudo; volta a pedir após X minutos em segundo plano.
   if (bloqueioAtivo()) mostrarBloqueio();

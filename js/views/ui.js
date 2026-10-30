@@ -13,16 +13,19 @@ export const etiqueta = (texto, tipo = '') => html`<span class="tag ${tipo}">${t
 
 // Caixa de diálogo modal com formulário. onSubmit(form) devolve false para manter aberta.
 // Fecha-se sempre por d.fechar() (não depender do evento "close", que nem todos os browsers disparam).
-export function dialogo(titulo, corpo, { onSubmit, onFechar, textoOk = 'Guardar', perigo = false } = {}) {
+// No telemóvel abre como "folha" de baixo para cima: título e botões fixos, só o conteúdo desliza.
+// semAcoes: sem a barra Cancelar/OK (ex.: menus de opções que fecham ao escolher).
+export function dialogo(titulo, corpo, { onSubmit, onFechar, textoOk = 'Guardar', perigo = false, semAcoes = false } = {}) {
   const d = document.createElement('dialog');
   d.className = 'dialogo';
   d.innerHTML = html`<form method="dialog" novalidate>
-    <h2>${titulo}</h2>
+    <div class="dialogo-cab"><h2>${titulo}</h2>
+      <button type="button" class="dialogo-fechar" data-cancelar aria-label="Fechar">✕</button></div>
     <div class="dialogo-corpo">${raw(corpo)}</div>
-    <div class="dialogo-acoes">
+    ${semAcoes ? '' : html`<div class="dialogo-acoes">
       <button type="button" class="btn btn-sec" data-cancelar>Cancelar</button>
       <button type="submit" class="btn ${perigo ? 'btn-perigo' : ''}">${textoOk}</button>
-    </div>
+    </div>`}
   </form>`;
   document.body.appendChild(d);
   const form = d.querySelector('form');
@@ -34,7 +37,9 @@ export function dialogo(titulo, corpo, { onSubmit, onFechar, textoOk = 'Guardar'
     d.remove();
     onFechar?.();
   };
-  d.querySelector('[data-cancelar]').onclick = () => d.fechar();
+  d.querySelectorAll('[data-cancelar]').forEach((b) => (b.onclick = () => d.fechar()));
+  // Nos menus, tocar fora (no fundo escurecido) fecha. Nos formulários não, para não perder o que foi escrito.
+  if (semAcoes) d.addEventListener('click', (ev) => { if (ev.target === d) d.fechar(); });
   d.addEventListener('cancel', (ev) => { ev.preventDefault(); d.fechar(); }); // tecla Esc
   d.addEventListener('close', () => d.fechar());
   form.onsubmit = (ev) => {

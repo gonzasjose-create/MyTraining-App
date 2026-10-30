@@ -22,6 +22,9 @@ export function html(partes, ...valores) {
 }
 export const raw = (s) => (s instanceof Seguro ? s : new Seguro(String(s ?? '')));
 
+// Texto para pesquisa: minúsculas e sem acentos ("Gémeos" → "gemeos").
+export const normalizar = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
 // ---------- Datas e números ----------
 export const hojeISO = () => {
   const d = new Date();

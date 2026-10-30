@@ -605,3 +605,113 @@ body.bloqueada main, body.bloqueada .nav, body.bloqueada .topo { visibility: hid
 /* Foco visível ao navegar com teclado (portátil). */
 :focus-visible { outline: 2px solid var(--cor-secundaria); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* ==========================================================================
+   v1.1 — usabilidade em telemóvel e tablet
+   ========================================================================== */
+
+/* ---------- Caixas de edição: título e botões sempre visíveis; no telemóvel abrem de baixo ---------- */
+.dialogo { overflow: hidden; max-height: 90vh; }
+.dialogo form { display: flex; flex-direction: column; max-height: inherit; padding: 0; }
+.dialogo-cab { display: flex; align-items: center; gap: 8px; padding: 12px 12px 10px 16px; border-bottom: 1px solid var(--linha); flex-shrink: 0; }
+.dialogo-cab h2 { flex: 1; margin: 0; font-size: 1.1rem; }
+.dialogo-fechar { width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; border: 0; background: var(--fundo); color: var(--texto); font-size: 1.05rem; cursor: pointer; }
+.dialogo-corpo { flex: 1; overflow-y: auto; padding: 12px 16px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.dialogo-acoes { flex-shrink: 0; margin: 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--linha); background: var(--superficie); }
+@media (max-width: 700px) {
+  .dialogo { width: 100%; max-width: 100%; margin: auto 0 0; border-radius: 18px 18px 0 0; max-height: 92vh; }
+  .dialogo[open] { animation: folha-subir .2s ease-out; }
+  .dialogo-acoes .btn { flex: 1; min-height: 50px; }
+}
+@media (min-width: 701px) { .dialogo { width: min(640px, calc(100vw - 48px)); } }
+@keyframes folha-subir { from { transform: translateY(40px); opacity: .5; } }
+
+/* ---------- Toque: alvos maiores em ecrãs tácteis ---------- */
+@media (pointer: coarse) {
+  .btn-icone { min-width: 44px; min-height: 44px; }
+  .btn-peq { min-height: 40px; }
+  .chip { min-height: 40px; }
+}
+
+/* ---------- Barra inferior: separador ativo mais evidente ---------- */
+.nav a span { display: inline-flex; align-items: center; justify-content: center; min-width: 52px; height: 30px; border-radius: 99px; transition: background .15s; }
+.nav a.ativo span { background: color-mix(in srgb, var(--cor-secundaria) 22%, transparent); }
+@media (min-width: 768px) { .nav { justify-content: center; } .nav a { flex: 0 1 140px; } }
+
+/* ---------- Ficha do cliente ---------- */
+.ficha-topo { margin-bottom: 8px; }
+.acoes-cliente { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; margin-bottom: 10px; }
+.acoes-cliente .btn-iniciar { grid-column: auto; min-height: 56px; font-size: 1.05rem; }
+.btn-quadrado { flex-direction: column; gap: 0; min-width: 64px; min-height: 56px; padding: 4px 8px; font-size: 1.2rem; line-height: 1.1; }
+.btn-quadrado small { font-size: .65rem; color: var(--texto-suave); font-weight: 600; }
+.separadores-ficha { position: sticky; top: calc(env(safe-area-inset-top) + 44px); z-index: 6; background: var(--fundo); margin: 0 -16px 12px; padding: 0 8px; overflow: visible; }
+.separadores-ficha a, .sep-mais {
+  display: flex; flex-direction: column; align-items: center; gap: 1px; flex: 1; min-width: 0;
+  padding: 8px 2px; font-size: .78rem; white-space: nowrap; text-align: center;
+}
+.separadores-ficha a span, .sep-mais span { font-size: 1.15rem; }
+.sep-mais { background: none; border: 0; border-bottom: 3px solid transparent; margin-bottom: -1px; color: var(--texto-suave); font: inherit; font-size: .78rem; cursor: pointer; justify-content: center; }
+.sep-mais.ativo { color: var(--texto); border-bottom-color: var(--cor-secundaria); font-weight: 600; }
+@media (max-width: 767px) { .separadores-ficha .sec-extra { display: none; } }
+@media (min-width: 768px) {
+  .separadores-ficha { flex-wrap: wrap; justify-content: flex-start; }
+  .separadores-ficha a { flex: 0 0 auto; flex-direction: row; gap: 6px; font-size: .9rem; padding: 10px 12px; }
+  .sep-mais { display: none; }
+}
+.grelha-seccoes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.grelha-seccoes a {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 6px; border-radius: 14px;
+  background: var(--fundo); color: var(--texto); text-decoration: none; font-size: .85rem; font-weight: 600; text-align: center;
+}
+.grelha-seccoes a span { font-size: 1.6rem; }
+.grelha-seccoes a.ativo { outline: 2px solid var(--cor-secundaria); }
+
+/* ---------- Listas: clientes com botão ▶; biblioteca agrupada; filtros em "chips" ---------- */
+.item-com-acao { display: flex; align-items: stretch; }
+.item-com-acao .item { flex: 1; min-width: 0; }
+.btn-linha { flex-shrink: 0; width: 56px; border: 0; border-left: 1px solid var(--linha); background: none; color: var(--ok); font-size: 1.3rem; cursor: pointer; border-radius: 0 var(--raio) var(--raio) 0; }
+.btn-linha:active { background: var(--ok-fundo); }
+.chips-rolar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; margin: 6px 0 8px; }
+.chips-rolar::-webkit-scrollbar { display: none; }
+.chips-rolar .chip { flex-shrink: 0; }
+.chip small { opacity: .7; margin-left: 2px; }
+.mais-filtros { margin-bottom: 8px; }
+.mais-filtros summary { cursor: pointer; color: var(--texto-suave); font-size: .9rem; padding: 6px 0; }
+.mais-filtros select { margin: 6px 0; }
+.grupo-titulo { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--texto-suave); margin: 14px 4px 6px; }
+.grupo-escolha h4 { position: sticky; top: 0; z-index: 1; margin: 0; padding: 6px 12px; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--texto-suave); background: var(--fundo); }
+.lista-escolha { max-height: 46vh; }
+@media (max-width: 700px) { .lista-escolha { max-height: 42vh; } }
+
+/* ---------- Tablet / ecrãs largos: aproveitar a largura ---------- */
+@media (min-width: 900px) {
+  main { max-width: 1180px; }
+  .painel-grelha { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  .painel-grelha > .cartao { margin: 0; }
+  .corpo-resumo, .corpo-metas, .corpo-zonas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  .corpo-resumo > *, .corpo-metas > *, .corpo-zonas > * { margin: 0; }
+  .corpo-zonas > .caixa, .corpo-resumo > .zona-perigo { grid-column: 1 / -1; }
+  .cartao-graficos { display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; }
+  .cartao-graficos > :not(.grafico) { grid-column: 1 / -1; }
+  /* Modo Treino em ecrã dividido: lista à esquerda, exercício atual à direita */
+  .vivo-lista { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 8px 16px; align-items: start; }
+  .vivo-lista > .ex-fechado { grid-column: 1; }
+  .vivo-lista > .ex-atual { grid-column: 2; grid-row: 1 / span 60; position: sticky; top: calc(env(safe-area-inset-top) + 48px + 70px); }
+  .vivo-lista > p { grid-column: 1 / -1; }
+}
+.ex-marcador { display: none; }
+@media (min-width: 900px) {
+  .ex-marcador { display: flex; border: 2px solid var(--cor-secundaria); font-weight: 700; }
+}
+.barra-filtros { grid-template-columns: 1fr auto !important; }
+.lista > li:has(.item-compacto) { margin-bottom: 6px; }
+.item-compacto { min-height: 52px; padding: 10px 14px; }
+.item-compacto .item-principal strong { margin-right: 6px; }
+.item-linha2 { display: block; margin-top: 2px; font-size: .78rem; }
+/* Folha: altura visível real (no Safari exclui a barra de ferramentas) e animação só de opacidade. */
+.dialogo { max-height: 90dvh; }
+@media (max-width: 700px) {
+  .dialogo { max-height: 92vh; max-height: 92dvh; }
+  .dialogo[open] { animation: folha-aparecer .18s ease-out; }
+}
+@keyframes folha-aparecer { from { opacity: .85; } }

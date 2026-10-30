@@ -20,19 +20,21 @@ import { entrarModoCliente } from './modo-cliente.js';
 import { limparFotosOrfas } from '../repo-fotos.js';
 import { dialogoExportarCliente } from './dados.js';
 
+// [chave, nome, ícone]. Os 4 primeiros estão sempre visíveis no telemóvel; os outros ficam em "Mais".
 const SEPARADORES = [
-  ['resumo', 'Resumo'],
-  ['analise', 'Análise'],
-  ['metas', 'Metas'],
-  ['zonas', 'Zonas'],
-  ['fotos', 'Fotos'],
-  ['sessoes', 'Sessões'],
-  ['planos', 'Planos'],
-  ['avaliacoes', 'Avaliações'],
-  ['pacotes', 'Pacotes'],
-  ['lesoes', 'Lesões'],
-  ['consentimentos', 'Consentimentos'],
+  ['resumo', 'Resumo', '📋'],
+  ['sessoes', 'Sessões', '🏋️'],
+  ['planos', 'Planos', '🗓️'],
+  ['analise', 'Análise', '📈'],
+  ['metas', 'Metas', '🎯'],
+  ['avaliacoes', 'Avaliações', '📏'],
+  ['zonas', 'Zonas', '❤️'],
+  ['fotos', 'Fotos', '📷'],
+  ['pacotes', 'Pacotes', '💳'],
+  ['lesoes', 'Lesões', '🩹'],
+  ['consentimentos', 'Consentimentos', '✍️'],
 ];
+const PRINCIPAIS = 4;
 
 export function vistaCliente(el, { id, tab = 'resumo' }) {
   const c = repo.obterCliente(+id);
@@ -50,8 +52,10 @@ export function vistaCliente(el, { id, tab = 'resumo' }) {
   const corpo = { resumo, analise, metas, zonas, fotos, sessoes, avaliacoes, planos, pacotes, lesoes, consentimentos }[tab] || resumo;
   // "Zonas" só faz sentido para clientes com resistência.
   const separadores = SEPARADORES.filter(([k]) => k !== 'zonas' || c.perfil_resistencia);
+  const atual = separadores.find(([k]) => k === tab) || separadores[0];
+  const secundarioAtivo = separadores.indexOf(atual) >= PRINCIPAIS;
   el.innerHTML = html`
-    ${cabecalho(c.nome, { voltar: '/clientes', acoes: `<a class="btn btn-sec" href="#/cliente/${c.id}/editar">Editar</a>` })}
+    ${cabecalho(c.nome, { voltar: '/clientes', acoes: `<a class="btn btn-sec btn-peq" href="#/cliente/${c.id}/editar">Editar</a>` })}
     <div class="ficha-topo">
       <span>${c.idade} anos</span> ${perfilTags(c)} ${c.ativo ? '' : etiqueta('Inativo')}
       ${lesoesAtivas ? raw(`<a href="#/cliente/${c.id}?tab=lesoes">${etiqueta(`⚠ ${lesoesAtivas} lesão(ões) ativa(s)`, 'tag-aviso')}</a>`) : ''}
@@ -59,14 +63,23 @@ export function vistaCliente(el, { id, tab = 'resumo' }) {
     </div>
     <div class="acoes-cliente">
       <button class="btn btn-iniciar" id="iniciar-treino">▶ Iniciar treino</button>
-      <button class="btn btn-sec" id="modo-cliente" title="Ecrã para mostrar ao cliente (sair pede PIN)">👁 Modo cliente</button>
-      <a class="btn btn-sec" href="#/relatorio/${c.id}?tipo=semana">📄 Resumo / relatório</a>
+      <button class="btn btn-sec btn-quadrado" id="modo-cliente" aria-label="Modo cliente" title="Modo cliente (sair pede PIN)">👁<small>Cliente</small></button>
+      <a class="btn btn-sec btn-quadrado" href="#/relatorio/${c.id}?tipo=semana" aria-label="Resumo e relatório" title="Resumo / relatório">📄<small>Relatório</small></a>
     </div>
-    <nav class="separadores">
-      ${separadores.map(([k, t]) => html`<a href="#/cliente/${c.id}?tab=${k}" class="${k === tab ? 'ativo' : ''}">${t}</a>`)}
+    <nav class="separadores separadores-ficha" aria-label="Secções do cliente">
+      ${separadores.map(([k, t, ic], i) => html`<a href="#/cliente/${c.id}?tab=${k}" class="${k === tab ? 'ativo' : ''} ${i >= PRINCIPAIS ? 'sec-extra' : ''}"><span aria-hidden="true">${ic}</span> ${t}</a>`)}
+      <button type="button" class="sep-mais ${secundarioAtivo ? 'ativo' : ''}" id="sep-mais" aria-haspopup="dialog">
+        ${secundarioAtivo ? html`<span aria-hidden="true">${atual[2]}</span> ${atual[1]}` : 'Mais'} ▾</button>
     </nav>
-    <section id="corpo"></section>`;
+    <section id="corpo" class="corpo-${atual[0]}"></section>`;
 
+  // "Mais": grelha com todas as secções (toque grande, com ícones).
+  el.querySelector('#sep-mais').onclick = () => {
+    const d = dialogo('Secções do cliente', html`<div class="grelha-seccoes">
+      ${separadores.map(([k, t, ic]) => html`<a href="#/cliente/${c.id}?tab=${k}" class="${k === tab ? 'ativo' : ''}"><span aria-hidden="true">${ic}</span>${t}</a>`)}
+    </div>`, { semAcoes: true });
+    d.querySelectorAll('.grelha-seccoes a').forEach((a) => a.addEventListener('click', () => d.fechar()));
+  };
   el.querySelector('#iniciar-treino').onclick = () => dialogoIniciarTreino({ clienteId: c.id });
   el.querySelector('#modo-cliente').onclick = () => entrarModoCliente(c.id, `#/cliente/${c.id}?tab=${tab}`);
   const sec = el.querySelector('#corpo');

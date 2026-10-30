@@ -1,7 +1,7 @@
 // Service worker: guarda os ficheiros da app para funcionar offline.
 // Os DADOS não passam por aqui (estão no IndexedDB). Ao publicar uma nova versão, incrementa VERSAO
 // (e VERSAO_APP em js/versao.js). Lista gerada a partir da pasta js/ — inclui todos os módulos.
-const VERSAO = 'treino-v7';
+const VERSAO = 'treino-v8';
 const FICHEIROS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'lib/sql-wasm.js', 'lib/sql-wasm.wasm', 'lib/chart.umd.js',
@@ -9,6 +9,7 @@ const FICHEIROS = [
   'js/analise.js',
   'js/app.js',
   'js/backup.js',
+  'js/biblioteca-v2.js',
   'js/bloqueio.js',
   'js/calc.js',
   'js/catalogos.js',
