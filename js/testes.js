@@ -6,6 +6,9 @@ import { lerTempo, tempo, lerNum } from './util.js';
 import { interpretarCheckin } from './repo-motivacao.js';
 import { gerarICS, nomeCalendario } from './ics.js';
 import { DEFINICOES_PADRAO } from './catalogos.js';
+import { escolherEquivalente, arredondarUnidades } from './equivalentes.js';
+import { comparacaoSemanas } from './visao-cliente.js';
+import { normalizarGrupos, ligarSeguinte, desligarSeguinte, rotulosGrupos, rotulo, moverComGrupos, seguinteNoGrupo, descansoGrupo } from './superseries.js';
 
 const resultados = [];
 const perto = (a, b, tol = 0.05) => Math.abs(a - b) <= tol;
@@ -29,6 +32,36 @@ testar('Força relativa 81 ÷ 61,2 = 1,32', () => igual(forcaRelativa(81, 61.2),
 testar('Assimetria 25,3 vs 30,4 → 16,8% alerta, esq. mais fraco', () => igual((({ pct, ladoFraco, nivel }) => ({ pct, ladoFraco, nivel }))(assimetria(25.3, 30.4)), { pct: 16.8, ladoFraco: 'esq', nivel: 'alerta' }));
 testar('Assimetria < 10% → ok', () => igual(assimetria(20, 21).nivel, 'ok'));
 testar('Melhor tentativa de salto', () => igual(melhorTentativa([175, 180, null, 178]), 180));
+
+// ---- Superséries
+const L = (gs) => gs.map((g, i) => ({ id: i + 1, grupo_id: g }));
+testar('Grupos: só seguidos ficam ligados; grupos de 1 desaparecem', () => igual([...normalizarGrupos(L([1, 1, null, 1, 2, 2, 2, 5])).values()], [1, 1, null, null, 2, 2, 2, null]));
+testar('Ligar 1+2 e 2+3 → tri-série', () => igual(ligarSeguinte(ligarSeguinte(L([null, null, null, null]), 1), 2).map((e) => e.grupo_id), [1, 1, 1, null]));
+testar('Desligar A1 de A2 numa tri-série → A2+A3 continuam ligados', () => igual([...normalizarGrupos(desligarSeguinte(L([1, 1, 1]), 1)).values()], [null, 1, 1]));
+testar('Rótulos A1, A2, B1, B2', () => { const r = rotulosGrupos(L([1, 1, null, 2, 2])); return igual([1, 2, 4, 5].map((i) => rotulo(r.get(i))), ['A1', 'A2', 'B1', 'B2']); });
+testar('Mover para fora de uma supersérie move o grupo inteiro', () => igual(moverComGrupos(L([null, 1, 1]), 1, 1), [2, 3, 1]));
+testar('Mover dentro da supersérie troca A1/A2', () => igual(moverComGrupos(L([1, 1, null]), 2, -1), [2, 1, 3]));
+testar('Alternância: A1 → A2 (a meio da ronda)', () => { const m = L([1, 1]); return igual((({ ex, volta }) => [ex.id, volta])(seguinteNoGrupo(m, 1, () => true)), [2, false]); });
+testar('Alternância: A2 → A1 (fim da ronda)', () => { const m = L([1, 1]); return igual((({ ex, volta }) => [ex.id, volta])(seguinteNoGrupo(m, 2, () => true)), [1, true]); });
+testar('Séries desiguais: A2 acabou → A1 continua sozinho', () => { const m = L([1, 1]); return igual(seguinteNoGrupo(m, 1, (x) => x.id === 1).ex.id, 1); });
+testar('Descanso: a meio da ronda = entre exercícios (vazio = 0)', () => igual(descansoGrupo([{ id: 1 }, { id: 2, descanso_apos_seg: 120 }], { id: 1 }, false, 90, 60), 0));
+testar('Descanso: fim da ronda = descanso da ronda', () => igual(descansoGrupo([{ id: 1, descanso_apos_seg: 15 }, { id: 2, descanso_apos_seg: 120 }], { id: 2 }, true, 90, 60), 120));
+testar('Descanso: ronda sem valor → descanso da série', () => igual(descansoGrupo([{ id: 1 }, { id: 2, descanso_apos_seg: null }], { id: 2 }, true, 90, 60), 90));
+
+// ---- Resumo semanal: equivalentes e comparação
+const EQ = DEFINICOES_PADRAO.equivalentes;
+testar('Equivalente: 2184 kg → entre 1 e 20 unidades, com "cerca de"', () => { const e = escolherEquivalente(EQ, 'peso', 2184, { semente: 0 }); return e && e.quantidade >= 1 && e.quantidade <= 20 && e.texto.includes('cerca de') ? true : JSON.stringify(e); });
+testar('Equivalente: volume baixo (40 kg) usa um item leve', () => igual(escolherEquivalente(EQ, 'peso', 40, { semente: 3 })?.nome, 'Melancia'));
+testar('Equivalente: abaixo do mínimo → não aparece', () => igual(escolherEquivalente(EQ, 'peso', 5), null));
+testar('Equivalente: a mesma semana dá o mesmo item; semanas diferentes podem variar', () => {
+  const a = (s) => escolherEquivalente(EQ, 'peso', 6000, { semente: s })?.nome;
+  return a(5) === a(5) && new Set([0, 1, 2, 3].map(a)).size > 1 ? true : 'sem variação';
+});
+testar('Equivalente: 1 unidade usa o singular ("um cavalo")', () => igual(escolherEquivalente([{ nome: 'Cavalo', tipo: 'peso', valor: 500, singular: 'cavalo', plural: 'cavalos' }], 'peso', 520).texto, 'Levantaste no total o equivalente a cerca de um cavalo.'));
+testar('Equivalente: arredonda a meias unidades abaixo de 3', () => igual([arredondarUnidades(1.3), arredondarUnidades(2.8), arredondarUnidades(7.4)], [1.5, 3, 7]));
+testar('Comparação: mais treinos e mais volume → frases positivas', () => igual(comparacaoSemanas({ sessoes: 3, volume: 1100 }, { sessoes: 2, volume: 1000 }), ['Mais 1 treino do que na semana anterior 👏', 'Mais 10% de volume do que na semana anterior 📈']));
+testar('Comparação: menos volume → linguagem neutra (sem "pior")', () => { const l = comparacaoSemanas({ sessoes: 2, volume: 800 }, { sessoes: 2, volume: 1000 }); return l.some((x) => /pior/i.test(x)) ? 'usa "pior"' : igual(l[1], 'Menos 20% de volume do que na semana anterior — recuperar também faz parte do plano.'); });
+testar('Comparação: semana sem treinos → sem comparação', () => igual(comparacaoSemanas({ sessoes: 0, volume: 0 }, { sessoes: 3, volume: 900 }), []));
 
 // ---- FC
 testar('Tanaka 42 anos = 179 bpm', () => igual(tanaka(42), 179));

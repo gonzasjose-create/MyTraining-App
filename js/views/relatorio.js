@@ -8,7 +8,7 @@ import { ESCALAS_CHECKIN } from '../catalogos.js';
 import { imagemSemana, imagemRelatorio, partilharOuDescarregar } from '../imagem-resumo.js';
 import { linha, limparGraficos } from '../graficos.js';
 import { linkWhatsApp } from './metas.js';
-import { html, raw, data, num, hojeISO, aviso, esc } from '../util.js';
+import { html, raw, data, num, tempo, hojeISO, aviso, esc } from '../util.js';
 import { dialogo, campo } from './ui.js';
 import { ir } from '../app.js';
 
@@ -59,7 +59,7 @@ export function vistaRelatorio(el, { id, tipo = 'semana', de, ate, semana }) {
         : !c.telemovel ? 'Sem telemóvel na ficha: o botão do WhatsApp não aparece.' : 'Sem consentimento para envio por WhatsApp: regista-o nos Consentimentos para usar o botão.'}
         No iPhone: “Imprimir” → gesto de afastar os dedos na pré-visualização → Partilhar → Guardar em Ficheiros (PDF).</p>
     </div>
-    <article class="relatorio" id="relatorio">${eSemana ? corpoSemana(c, r, marca, t) : corpoPeriodo(c, r, marca, t)}</article>`;
+    <article class="relatorio" id="relatorio" style="--marca:${marca.cor_principal};--marca2:${marca.cor_secundaria}">${eSemana ? corpoSemana(c, r, marca, t) : corpoPeriodo(c, r, marca, t)}</article>`;
 
   // Atualiza o link do WhatsApp com o texto atual.
   const atualizarWA = () => {
@@ -117,22 +117,46 @@ function blocoMetas(metas) {
 }
 function blocoPRs(prs, titulo = '🏆 Recordes') {
   if (!prs.length) return '';
-  return html`<section><h2>${titulo}</h2><ul class="rel-lista">${prs.slice(0, 6).map((p) => html`<li><strong>${p.nome}</strong>: ${num(p.valor)} kg <small>(1RM est. · ${num(p.carga)} × ${p.reps} · ${data(p.data).slice(0, 5)} · +${num(p.ganho, 0)}%)</small></li>`)}</ul></section>`;
+  return html`<section><h2>${titulo}</h2><ul class="rel-lista">${prs.slice(0, 6).map((p) => html`<li><strong>${p.nome}</strong>: ${num(p.valor)} kg <small>(1RM est. · ${num(p.carga)} × ${p.reps} · ${data(p.data).slice(0, 5)} · +${num(p.valor - p.anterior)} kg, +${num(p.ganho, 0)}%)</small></li>`)}</ul></section>`;
 }
 
 // ---------------------------------------------------------------- Resumo semanal
+// Barras simples (HTML/CSS: imprimem bem e não dependem de gráficos).
+function barrasGrupos(porGrupo) {
+  if (!porGrupo.length) return '';
+  const max = porGrupo[0][1];
+  return html`<section class="quebra-evitar"><h2>Volume por grupo muscular</h2><div class="rel-barras">${porGrupo.slice(0, 6).map(([g, kg]) => html`
+    <div class="rel-barras-linha"><span>${g}</span><div class="rel-barras-fundo"><i style="width:${Math.max(4, Math.round((kg / max) * 100))}%"></i></div><strong>${vc.textoVolume(kg)}</strong></div>`)}</div></section>`;
+}
+
 function corpoSemana(c, r, marca, t) {
+  const temForca = r.series > 0;
   return html`
     ${cabecalhoMarca(marca, 'Resumo da semana', c, `${data(r.de)} – ${data(r.ate)}`)}
     <div class="rel-kpis">
       ${kpi(`${r.sessoes}${r.combinado ? `/${r.combinado}` : ''}`, 'treinos')}
+      ${r.minutos ? kpi(vc.tempoTotal(r.minutos), 'tempo total') : ''}
+      ${r.volume ? kpi(vc.textoVolume(r.volume), 'volume total') : ''}
+      ${temForca ? kpi(r.series, 'séries') : ''}
+      ${temForca ? kpi(r.reps, 'repetições') : ''}
+      ${r.cargaMedia ? kpi(vc.textoVolume(r.cargaMedia), 'carga média por sessão') : ''}
+      ${r.rpeMedio != null ? kpi(num(r.rpeMedio), 'RPE médio (1–10)') : ''}
       ${kpi(`🔥 ${r.streak}`, 'semanas seguidas')}
       ${kpi(r.prs.length, r.prs.length === 1 ? 'recorde' : 'recordes')}
     </div>
+    ${r.pcReps && !r.pcIncluido ? html`<p class="rel-nota">+ ${r.pcReps} repetições com peso corporal (${r.pcSeries} séries)</p>` : ''}
     ${r.sessoes === 0 ? html`<p class="rel-frase">Esta semana não houve treinos registados — a próxima é uma boa oportunidade para retomar o ritmo! 💪</p>`
       : r.combinado && r.sessoes >= r.combinado ? html`<p class="rel-frase">Cumpriste tudo o que estava combinado esta semana. Excelente! 👏</p>`
       : html`<p class="rel-frase">Cada treino conta — bom trabalho esta semana! 💪</p>`}
+    ${r.equivalentes.length ? html`<section><div class="rel-equivalentes">${r.equivalentes.map((e) => html`<div class="rel-equiv"><span aria-hidden="true">${e.icone}</span><p>${e.texto}</p></div>`)}</div></section>` : ''}
+    ${r.distancia_m || r.duracao_seg ? html`<section><h2>🏃 Resistência</h2><div class="rel-kpis rel-kpis-sub">
+      ${r.distancia_m ? kpi(`${num(r.distancia_m / 1000, 1)} km`, 'distância') : ''}
+      ${r.duracao_seg ? kpi(tempo(r.duracao_seg), 'tempo de cardio') : ''}
+      ${r.ritmoKm ? kpi(`${tempo(r.ritmoKm)}/km`, 'ritmo médio (corrida)') : ''}</div></section>` : ''}
+    ${barrasGrupos(r.porGrupo)}
+    ${r.melhor ? html`<section><h2>⭐ Exercício da semana</h2><p><strong>${r.melhor.nome}</strong> — ${r.melhor.texto}</p></section>` : ''}
     ${blocoPRs(r.prs, '🏆 Recordes da semana')}
+    ${r.comparacao.length ? html`<section><h2>Em relação à semana anterior</h2><ul class="rel-lista">${r.comparacao.map((x) => html`<li>${x}</li>`)}</ul></section>` : ''}
     ${blocoMetas(r.metas)}
     ${r.checkin ? html`<section><h2>📝 Check-in</h2><div class="rel-checkin">${ESCALAS_CHECKIN.map((e) => html`<div><span>${r.checkin[e.id]}/5</span>${e.nome}</div>`)}</div>
       <small>Escala 1–5 (na dor, 1 = nenhuma).</small></section>` : ''}

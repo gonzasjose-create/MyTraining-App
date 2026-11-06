@@ -22,6 +22,7 @@ import { vistaAvaliacao } from './views/avaliacao.js';
 import { vistaDefinicoes } from './views/definicoes.js';
 import { vistaTreino } from './views/treino.js';
 import { vistaPlano } from './views/planos.js';
+import { iniciarEstabilidade, aplicarEstabilidade } from './estabilidade.js';
 
 // Rotas: padrão → vista. ":x" captura um parâmetro.
 const ROTAS = [
@@ -80,6 +81,8 @@ function resolver() {
 let limpeza = null;
 // Posição de scroll por endereço (listas e ficha do cliente).
 const posicoes = new Map();
+// O scroll é feito no contentor .rolar (a página em si não desliza: a barra inferior fica sempre no fundo).
+const rolar = () => document.getElementById('rolar');
 const RESTAURAR_POSICAO = /^#\/(clientes|treino|agenda|resumos|pagamentos|cliente\/\d+)(\?|$)/;
 
 function render() {
@@ -100,7 +103,8 @@ function render() {
   const c = r?.caminho || '';
   const secao = c === '/' ? '/' : c.startsWith('/definicoes') ? '/definicoes' : c.startsWith('/treino') ? '/treino' : c.startsWith('/agenda') ? '/agenda' : '/clientes';
   document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('ativo', a.getAttribute('href') === '#' + secao));
-  window.scrollTo(0, 0);
+  aplicarEstabilidade(); // sem zoom nos ecrãs de registo (estabilidade.js)
+  rolar().scrollTop = 0;
   if (!r) {
     main.innerHTML = '<div class="vazio"><p>Página não encontrada.</p><a class="btn" href="#/">Voltar ao painel</a></div>';
     return;
@@ -109,7 +113,7 @@ function render() {
     limpeza = r.vista(main, r.params);
     // Ao regressar a uma lista, repõe a posição onde estavas.
     const y = RESTAURAR_POSICAO.test(location.hash) ? posicoes.get(location.hash) : null;
-    if (y) requestAnimationFrame(() => window.scrollTo(0, y));
+    if (y) requestAnimationFrame(() => (rolar().scrollTop = y));
   } catch (e) {
     console.error(e);
     main.innerHTML = `<div class="caixa caixa-erro"><strong>Ocorreu um erro.</strong><p>${esc(e.message)}</p></div>`;
@@ -143,8 +147,9 @@ async function arrancar() {
   garantirBiblioteca();
   limparFotosOrfas();
   aplicarTema();
+  iniciarEstabilidade();
   window.addEventListener('hashchange', (ev) => {
-    try { posicoes.set(new URL(ev.oldURL).hash || '#/', window.scrollY); } catch { /* ignorar */ }
+    try { posicoes.set(new URL(ev.oldURL).hash || '#/', rolar().scrollTop); } catch { /* ignorar */ }
     render();
   });
   render();

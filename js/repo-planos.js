@@ -3,6 +3,7 @@ import { todos, um, escalar, executar, inserir, atualizar, transacao } from './d
 import { def, verificarContraindicacao } from './repo.js';
 import { DEFINICOES_PADRAO } from './catalogos.js';
 import { CAMPOS_PRESCRICAO, sugerirSeguintes, iguais } from './progressao.js';
+import { normalizarGrupos, ligarSeguinte, desligarSeguinte, moverComGrupos } from './superseries.js';
 
 export const cfgProgressao = () => ({ ...DEFINICOES_PADRAO.progressao, ...def('progressao') });
 
@@ -155,7 +156,50 @@ function mover(tabela, campoGrupo, id, dir) {
   });
 }
 export const moverSessao = (id, dir) => mover('plano_sessoes', 'plano_id', id, dir);
-export const moverExercicio = (id, dir) => mover('plano_exercicios', 'sessao_id', id, dir);
+export const moverExercicio = (id, dir) => moverEmGrupos('plano_exercicios', id, dir);
+
+// ---------- Superséries (plano_exercicios e sessao_exercicios: ambos têm sessao_id e ordem) ----------
+const TABELAS_GRUPO = ['plano_exercicios', 'sessao_exercicios'];
+const listaGrupos = (tabela, paiId) => todos(`SELECT id, grupo_id, descanso_apos_seg FROM ${tabela} WHERE sessao_id = ? ORDER BY ordem, id`, [paiId]);
+
+// Aplica uma alteração aos grupos (fn recebe a lista ordenada) e normaliza: só exercícios seguidos
+// ficam ligados; grupos de 1 desaparecem (e perdem o descanso de grupo).
+export function reagrupar(tabela, paiId, fn = (l) => l) {
+  if (!TABELAS_GRUPO.includes(tabela)) throw new Error('Tabela inválida');
+  const lista = listaGrupos(tabela, paiId);
+  const novo = normalizarGrupos(fn(lista.map((e) => ({ ...e }))));
+  transacao(() => {
+    for (const e of lista) {
+      const g = novo.get(e.id);
+      if (g !== e.grupo_id) executar(`UPDATE ${tabela} SET grupo_id = ?${g == null ? ', descanso_apos_seg = NULL' : ''} WHERE id = ?`, [g, e.id]);
+    }
+  });
+}
+const paiDe = (tabela, id) => escalar(`SELECT sessao_id FROM ${tabela} WHERE id = ?`, [id]);
+export const ligarAoSeguinte = (tabela, id) => reagrupar(tabela, paiDe(tabela, id), (l) => ligarSeguinte(l, id));
+export const desligarDoSeguinte = (tabela, id) => reagrupar(tabela, paiDe(tabela, id), (l) => desligarSeguinte(l, id));
+// Descansos do grupo: "intra" depois de cada exercício (exceto o último) e "ronda" depois do último.
+export function definirDescansosGrupo(tabela, paiId, grupo, intra, ronda) {
+  if (!TABELAS_GRUPO.includes(tabela)) throw new Error('Tabela inválida');
+  const membros = listaGrupos(tabela, paiId).filter((e) => e.grupo_id === grupo);
+  transacao(() => membros.forEach((e, i) =>
+    executar(`UPDATE ${tabela} SET descanso_apos_seg = ? WHERE id = ?`, [i === membros.length - 1 ? ronda : intra, e.id])));
+}
+// Mover sem partir superséries (ver moverComGrupos).
+export function moverEmGrupos(tabela, id, dir) {
+  if (!TABELAS_GRUPO.includes(tabela)) throw new Error('Tabela inválida');
+  const pai = paiDe(tabela, id);
+  const ids = moverComGrupos(listaGrupos(tabela, pai), id, dir);
+  transacao(() => ids.forEach((x, k) => executar(`UPDATE ${tabela} SET ordem = ? WHERE id = ?`, [k, x])));
+  reagrupar(tabela, pai);
+}
+// Apaga um exercício e corrige os grupos que ficaram (ex.: supersérie de 2 → exercício normal).
+export function apagarComGrupos(tabela, id) {
+  if (!TABELAS_GRUPO.includes(tabela)) throw new Error('Tabela inválida');
+  const pai = paiDe(tabela, id);
+  executar(`DELETE FROM ${tabela} WHERE id = ?`, [id]);
+  if (pai != null) reagrupar(tabela, pai);
+}
 
 // ---------- Exercícios do plano e prescrições ----------
 export function adicionarExercicioPlano(sessaoId, { exercicio_id, metodo, params, notas }) {
@@ -165,7 +209,7 @@ export function adicionarExercicioPlano(sessaoId, { exercicio_id, metodo, params
 export const atualizarExercicioPlano = (id, { metodo, params, notas }) =>
   atualizar('plano_exercicios', id, { metodo, params: JSON.stringify(params || {}), notas });
 export const trocarExercicio = (id, novoExercicioId) => atualizar('plano_exercicios', id, { exercicio_id: novoExercicioId });
-export const apagarExercicioPlano = (id) => executar('DELETE FROM plano_exercicios WHERE id = ?', [id]);
+export const apagarExercicioPlano = (id) => apagarComGrupos('plano_exercicios', id);
 
 export function gravarPrescricao(peId, semana, p) {
   const vals = CAMPOS_PRESCRICAO.map((c) => p[c] ?? null);
@@ -207,7 +251,7 @@ export function sugestoesPlano(plano, semanaAncora) {
         ? todos(
             `SELECT y.carga_kg, y.reps, y.rpe, y.qualidade FROM sessao_series y
              JOIN sessao_exercicios x ON x.id = y.sessao_exercicio_id JOIN sessoes ss ON ss.id = x.sessao_id
-             WHERE x.plano_exercicio_id = ? AND ss.semana = ? AND ss.estado = 'realizada' AND y.estado = 'feita'
+             WHERE x.plano_exercicio_id = ? AND ss.semana = ? AND ss.estado = 'realizada' AND y.estado = 'feita' AND y.aquecimento = 0
                AND x.substitui_exercicio_id IS NULL`,
             [pe.id, semanaAncora]
           )
@@ -232,6 +276,7 @@ export function duplicarPlano(origemId, { cliente_id = null, nome, data_inicio =
       for (const e of s.exercicios) {
         const peId = inserir('plano_exercicios', {
           sessao_id: sid, exercicio_id: e.exercicio_id, ordem: e.ordem, metodo: e.metodo, params: JSON.stringify(e.params), notas: e.notas,
+          grupo_id: e.grupo_id, descanso_apos_seg: e.descanso_apos_seg,
         });
         for (const [sem, p] of Object.entries(e.presc)) gravarPrescricao(peId, +sem, p);
       }

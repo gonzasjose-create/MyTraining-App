@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Testes · Treino</title>
+  <style>
+    :root { --ok: #1E8E5A; --erro: #C0362C; --fundo: #F5F6F8; --texto: #1B1F24; }
+    @media (prefers-color-scheme: dark) { :root { --fundo: #111418; --texto: #E8EBEF; --ok: #4CC38A; --erro: #F07167; } }
+    body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--fundo); color: var(--texto); margin: 0; padding: 16px; }
+    h1 { font-size: 1.3rem; }
+    table { border-collapse: collapse; width: 100%; max-width: 900px; font-size: .9rem; }
+    td { padding: 6px 8px; border-bottom: 1px solid rgba(128, 128, 128, .3); vertical-align: top; }
+    .ok { color: var(--ok); font-weight: 700; }
+    .erro { color: var(--erro); font-weight: 700; }
+    code { font-size: .85em; }
+  </style>
+</head>
+<body>
+  <h1>Testes automáticos das fórmulas e regras</h1>
+  <p>Não lê nem altera os dados da app. <a href="./">Voltar à app</a></p>
+  <p id="resumo">A correr…</p>
+  <table id="tabela"></table>
+  <script type="module" src="js/testes.js"></script>
+</body>
+</html>

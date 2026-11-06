@@ -3,7 +3,7 @@ import { def } from '../repo.js';
 import { cfgProgressao } from '../repo-planos.js';
 import { gravarDefinicao, apagarTudo, escalar } from '../db.js';
 import { PALETAS, DEFINICOES_PADRAO } from '../catalogos.js';
-import { html, Validador, mostrarErros, lerForm, aviso, tempo, lerTempo } from '../util.js';
+import { html, raw, num, Validador, mostrarErros, lerForm, aviso, tempo, lerTempo } from '../util.js';
 import { cabecalho, campo, confirmar } from './ui.js';
 import { carregarDadosExemplo, garantirBiblioteca } from '../seed.js';
 import { aplicarTema } from '../app.js';
@@ -14,6 +14,8 @@ import { cfgAgenda } from '../repo-agenda.js';
 import { temPin, dialogoDefinirPin } from './modo-cliente.js';
 import { blocoBackup, blocoPinApp, blocoConservacao } from './dados.js';
 import { SEGMENTOS_HYROX, totalHyrox } from '../ritmos.js';
+import { TIPOS_EQUIVALENTE } from '../equivalentes.js';
+import { cfgRelatorio } from '../visao-cliente.js';
 
 export function vistaDefinicoes(el) {
   const neg = def('negocio');
@@ -103,6 +105,8 @@ export function vistaDefinicoes(el) {
     </form>
 
     <div class="cartao" id="tipos-pacote"></div>
+
+    <div class="cartao" id="bl-relatorio"></div>
 
     <form id="f-ritmos" class="form cartao" novalidate>
       <h3>Zonas de ritmo, Hyrox e alertas <small class="estimativa">estimativas</small></h3>
@@ -235,6 +239,7 @@ export function vistaDefinicoes(el) {
     aviso('Definições guardadas.');
   };
   blocoTiposPacote(el.querySelector('#tipos-pacote'));
+  blocoRelatorio(el.querySelector('#bl-relatorio'));
   el.querySelector('#pin').onclick = () => dialogoDefinirPin(() => vistaDefinicoes(el));
 
   // ---- Zonas de ritmo, Hyrox e alertas da análise
@@ -304,6 +309,92 @@ export function vistaDefinicoes(el) {
 }
 
 // Reduz uma imagem para no máximo "lado" px e devolve data URL (PNG mantém transparência).
+// ---------------------------------------------------------------- Relatório semanal e equivalentes
+// Cada equivalente numa linha recolhida ("🍉 Melancia · 8 kg"); toca para editar.
+function linhaEquiv(e, i, aberto = false) {
+  const opTipos = Object.entries(TIPOS_EQUIVALENTE).map(([k, t]) => [k, `${t.nome} (${t.unidade})`]);
+  const resumo = e.nome ? `${e.icone || '✨'} ${e.nome} · ${num(e.valor)} ${TIPOS_EQUIVALENTE[e.tipo]?.unidade ?? ''}${e.ativo === false ? ' · inativo' : ''}` : '✨ Novo equivalente';
+  return html`<details class="equiv" data-i="${i}" ${aberto ? raw('open') : ''}><summary>${resumo}</summary>
+    <div class="equiv-cab">
+      ${campo(`eq${i}_icone`, 'Ícone', { valor: e.icone, attrs: 'maxlength="8" class="input-icone"' })}
+      ${campo(`eq${i}_nome`, 'Nome', { valor: e.nome })}
+      <button type="button" class="btn-lixo" data-eq-remover="${i}" aria-label="Remover ${e.nome || 'equivalente'}">🗑</button>
+    </div>
+    <div class="grelha-2">
+      ${campo(`eq${i}_tipo`, 'Mede', { tipo: 'select', valor: e.tipo, opcoes: opTipos })}
+      ${campo(`eq${i}_valor`, 'Valor de 1 unidade', { tipo: 'number', valor: e.valor })}
+      ${campo(`eq${i}_singular`, 'Texto para 1 (singular)', { valor: e.singular, attrs: 'placeholder="elefante"' })}
+      ${campo(`eq${i}_plural`, 'Texto para vários (plural)', { valor: e.plural, attrs: 'placeholder="elefantes"' })}
+    </div>
+    ${campo(`eq${i}_ativo`, 'Ativo', { tipo: 'checkbox', valor: e.ativo !== false })}
+  </details>`;
+}
+
+function blocoRelatorio(caixa) {
+  const rs = cfgRelatorio();
+  const eqs = def('equivalentes');
+  let proximo = eqs.length;
+  caixa.innerHTML = html`<form id="f-relatorio" class="form" novalidate>
+    <h3>Resumo semanal</h3>
+    ${campo('rs_pc', 'Incluir exercícios de peso corporal no volume (kg)', { tipo: 'checkbox', valor: rs.volume_peso_corporal, ajuda: 'Usa o último peso registado do cliente × a % de cada exercício (editável na biblioteca de exercícios). Desligado: as séries e repetições com o peso corporal aparecem numa linha à parte.' })}
+    <h4>Equivalentes divertidos</h4>
+    <p class="ajuda">Ex.: “levantaste no total o equivalente a cerca de 3 elefantes”. Em cada semana a app escolhe um item ativo que dê entre o mínimo e o máximo de unidades, e varia de semana para semana. Com pouco volume escolhe naturalmente um item mais leve; se nenhum servir, não aparece.</p>
+    <div class="grelha-2">
+      ${campo('rs_min', 'Mínimo de unidades', { tipo: 'number', valor: rs.equiv_min })}
+      ${campo('rs_max', 'Máximo de unidades', { tipo: 'number', valor: rs.equiv_max })}
+    </div>
+    <div id="lista-equiv">${eqs.map((e, i) => linhaEquiv(e, i))}</div>
+    <div class="botoes">
+      <button type="button" class="btn btn-sec btn-peq" id="eq-add">+ Equivalente</button>
+      <button type="button" class="btn btn-sec btn-peq" id="eq-repor">Repor sugestões</button>
+    </div>
+    <button class="btn">Guardar resumo semanal</button>
+  </form>`;
+  const f = caixa.querySelector('form');
+  const lista = caixa.querySelector('#lista-equiv');
+  lista.onclick = (ev) => {
+    const b = ev.target.closest('[data-eq-remover]');
+    if (b) lista.querySelector(`.equiv[data-i="${b.dataset.eqRemover}"]`).remove();
+  };
+  caixa.querySelector('#eq-add').onclick = () => {
+    lista.insertAdjacentHTML('beforeend', String(linhaEquiv({ nome: '', tipo: 'peso', valor: '', singular: '', plural: '', icone: '✨', ativo: true }, proximo++, true)));
+    lista.lastElementChild.querySelector('input[name$="_nome"]').focus();
+  };
+  caixa.querySelector('#eq-repor').onclick = async () => {
+    if (!(await confirmar('Repor a lista de equivalentes sugerida? Os que acrescentaste ou alteraste perdem-se.', { textoOk: 'Repor' }))) return;
+    gravarDefinicao('equivalentes', DEFINICOES_PADRAO.equivalentes);
+    aviso('Lista de equivalentes reposta.');
+    blocoRelatorio(caixa);
+  };
+  f.onsubmit = (ev) => {
+    ev.preventDefault();
+    const d = lerForm(f);
+    const v = new Validador();
+    const min = v.numero('rs_min', d.rs_min, { min: 0.5, max: 100, obrigatorio: true, nome: 'Mínimo' });
+    const max = v.numero('rs_max', d.rs_max, { min: 1, max: 1000, obrigatorio: true, nome: 'Máximo' });
+    if (min != null && max != null && max <= min) v.erro('rs_max', 'O máximo tem de ser maior que o mínimo.');
+    const novos = [...lista.querySelectorAll('.equiv')].map((fs) => {
+      const i = fs.dataset.i;
+      return {
+        nome: v.texto(`eq${i}_nome`, d[`eq${i}_nome`], { obrigatorio: true, max: 40, nome: 'Nome' }),
+        tipo: d[`eq${i}_tipo`],
+        valor: v.numero(`eq${i}_valor`, d[`eq${i}_valor`], { min: 0.01, max: 1e7, obrigatorio: true, nome: 'Valor' }),
+        singular: v.texto(`eq${i}_singular`, d[`eq${i}_singular`], { obrigatorio: true, max: 80, nome: 'Singular' }),
+        plural: v.texto(`eq${i}_plural`, d[`eq${i}_plural`], { obrigatorio: true, max: 80, nome: 'Plural' }),
+        icone: (d[`eq${i}_icone`] || '').trim() || '✨',
+        ativo: !!d[`eq${i}_ativo`],
+      };
+    });
+    // Abre os equivalentes com erros (os campos estão dentro de linhas recolhidas).
+    for (const k of Object.keys(v.erros)) f.querySelector(`[name="${k}"]`)?.closest('details')?.setAttribute('open', '');
+    if (!v.ok) return mostrarErros(f, v.erros);
+    gravarDefinicao('relatorio_semanal', { volume_peso_corporal: !!d.rs_pc, equiv_min: min, equiv_max: max });
+    gravarDefinicao('equivalentes', novos);
+    aviso('Resumo semanal guardado.');
+    blocoRelatorio(caixa);
+  };
+}
+
 function reduzirImagem(ficheiro, lado) {
   return new Promise((resolve, reject) => {
     const img = new Image();

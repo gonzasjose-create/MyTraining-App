@@ -26,7 +26,7 @@ function seriesRealizadas(clienteId) {
        y.carga_kg, y.reps, y.rpe, y.qualidade, y.duracao_seg, y.distancia_m, y.fc_media
      FROM sessao_series y JOIN sessao_exercicios x ON x.id = y.sessao_exercicio_id
      JOIN sessoes s ON s.id = x.sessao_id JOIN exercicios e ON e.id = x.exercicio_id
-     WHERE s.cliente_id = ? AND s.estado = 'realizada' AND y.estado = 'feita' ORDER BY s.data, s.hora_inicio`,
+     WHERE s.cliente_id = ? AND s.estado = 'realizada' AND y.estado = 'feita' AND y.aquecimento = 0 ORDER BY s.data, s.hora_inicio`,
     [clienteId]
   );
 }
@@ -72,7 +72,7 @@ export function semanas(clienteId, n = 12, series = seriesRealizadas(clienteId))
   const porSessao = new Map();
   for (const y of series) {
     const s = porSessao.get(y.sessao_id) || { ton: 0, n: 0, rpes: [] };
-    if (y.tipo_registo === 'forca') { s.n++; if (y.carga_kg && y.reps) s.ton += y.carga_kg * y.reps; }
+    if (y.tipo_registo === 'forca') { s.n++; if (y.carga_kg && y.reps && y.qualidade >= 1) s.ton += y.carga_kg * y.reps; }
     if (y.rpe != null) s.rpes.push(y.rpe);
     porSessao.set(y.sessao_id, s);
   }

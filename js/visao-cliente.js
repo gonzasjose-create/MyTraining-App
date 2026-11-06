@@ -8,7 +8,8 @@ import { e1rmPorExercicio, variacoes, somarDias, inicioSemana, diasEntre } from 
 import { listarMetas, progressoMeta, consistencia, checkinSemana } from './repo-motivacao.js';
 import { obterPlano } from './repo-planos.js';
 import { planoAtivo, semanaDoPlano } from './repo-sessoes.js';
-import { TESTES_AEROBIOS, TESTES_FORCA } from './catalogos.js';
+import { TESTES_AEROBIOS, TESTES_FORCA, DEFINICOES_PADRAO, familiaDe } from './catalogos.js';
+import { escolherEquivalente, sementeSemana } from './equivalentes.js';
 import { hojeISO, num, tempo } from './util.js';
 
 const pct = (a, b) => (b ? ((a - b) / b) * 100 : null);
@@ -115,22 +116,144 @@ export function focoProximaSemana(c, data = hojeISO()) {
   return p.semanas.find((x) => x.semana === s)?.foco || '';
 }
 
+// ---------------------------------------------------------------- Números de uma semana
+// Volume = carga × reps das séries FEITAS com qualidade técnica 1–2. Ficam de fora: séries eliminadas
+// (já não existem), saltadas, de aquecimento e com técnica 0. Exercícios de peso corporal sem carga
+// contam séries e repetições à parte; só entram em kg se a opção estiver ligada (peso × % do exercício).
+export const cfgRelatorio = () => ({ ...DEFINICOES_PADRAO.relatorio_semanal, ...repo.def('relatorio_semanal') });
+
+function ultimoPeso(clienteId, ate) {
+  return todos(
+    `SELECT cp.peso_kg FROM avaliacao_composicao cp JOIN avaliacoes a ON a.id = cp.avaliacao_id
+     WHERE a.cliente_id = ? AND a.data <= ? AND cp.peso_kg IS NOT NULL ORDER BY a.data DESC LIMIT 1`,
+    [clienteId, ate]
+  )[0]?.peso_kg ?? null;
+}
+
+export function numerosPeriodo(c, de, ate, cfg = cfgRelatorio()) {
+  const sess = todos("SELECT duracao_seg, rpe_sessao FROM sessoes WHERE cliente_id = ? AND estado = 'realizada' AND data BETWEEN ? AND ?", [c.id, de, ate]);
+  const series = todos(
+    `SELECT e.nome, e.grupo_muscular, e.tipo_registo, e.unidade_ritmo, e.peso_corporal_pct,
+       y.carga_kg, y.reps, y.rpe, y.qualidade, y.duracao_seg, y.distancia_m
+     FROM sessao_series y JOIN sessao_exercicios x ON x.id = y.sessao_exercicio_id
+     JOIN sessoes s ON s.id = x.sessao_id JOIN exercicios e ON e.id = x.exercicio_id
+     WHERE s.cliente_id = ? AND s.estado = 'realizada' AND s.data BETWEEN ? AND ? AND y.estado = 'feita' AND y.aquecimento = 0`,
+    [c.id, de, ate]
+  );
+  const peso = cfg.volume_peso_corporal ? ultimoPeso(c.id, ate) : null;
+  const n = { sessoes: sess.length, minutos: Math.round(sess.reduce((a, s) => a + (s.duracao_seg || 0), 0) / 60),
+    series: 0, reps: 0, volume: 0, pcSeries: 0, pcReps: 0, pcIncluido: !!peso, porGrupo: {}, porExercicio: {},
+    distancia_m: 0, duracao_seg: 0, kmDist: 0, kmTempo: 0 };
+  const rpes = [];
+  for (const y of series) {
+    if (y.tipo_registo === 'resistencia') {
+      n.distancia_m += y.distancia_m || 0;
+      n.duracao_seg += y.duracao_seg || 0;
+      if (y.unidade_ritmo === 'km' && y.distancia_m && y.duracao_seg) { n.kmDist += y.distancia_m; n.kmTempo += y.duracao_seg; }
+      continue;
+    }
+    n.series++;
+    n.reps += y.reps || 0;
+    if (y.rpe != null) rpes.push(y.rpe);
+    if (!(y.reps > 0) || y.qualidade < 1) continue;
+    const carga = y.carga_kg || 0;
+    let kg = 0;
+    if (y.peso_corporal_pct != null && peso) kg = (peso * y.peso_corporal_pct / 100 + carga) * y.reps;
+    else if (carga > 0) kg = carga * y.reps;
+    else { n.pcSeries++; n.pcReps += y.reps; } // sem carga = peso corporal (conta à parte)
+    if (!kg) continue;
+    n.volume += kg;
+    const g = familiaDe(y.grupo_muscular);
+    n.porGrupo[g] = (n.porGrupo[g] || 0) + kg;
+    n.porExercicio[y.nome] = (n.porExercicio[y.nome] || 0) + kg;
+  }
+  n.volume = Math.round(n.volume);
+  // RPE médio: o da sessão (se registado), senão o das séries.
+  const rpeSess = sess.map((s) => s.rpe_sessao).filter((v) => v != null);
+  const lista = rpeSess.length ? rpeSess : rpes;
+  n.rpeMedio = lista.length ? Math.round((lista.reduce((a, b) => a + b, 0) / lista.length) * 10) / 10 : null;
+  // Carga média por sessão = volume ÷ sessões feitas (só faz sentido com 2 ou mais).
+  n.cargaMedia = n.sessoes > 1 && n.volume ? Math.round(n.volume / n.sessoes) : null;
+  n.ritmoKm = n.kmDist >= 500 ? Math.round(n.kmTempo / (n.kmDist / 1000)) : null;
+  return n;
+}
+
+// Comparação com a semana anterior, sempre em linguagem neutra/positiva (nunca "pior").
+// parcial: semana ainda a decorrer → compara com a anterior só até ao mesmo dia.
+export function comparacaoSemanas(a, b, parcial = false) {
+  if (!b.sessoes || !a.sessoes) return [];
+  const l = [];
+  const ref = parcial ? 'na mesma altura da semana anterior' : 'na semana anterior';
+  const refDa = parcial ? 'da mesma altura da semana anterior' : 'da semana anterior';
+  const dif = a.sessoes - b.sessoes;
+  if (dif > 0) l.push(`Mais ${dif} treino${dif > 1 ? 's' : ''} do que ${ref} 👏`);
+  else if (dif === 0) l.push(`O mesmo número de treinos que ${ref} — consistência!`);
+  else l.push(`${-dif} treino${dif < -1 ? 's' : ''} a menos do que ${ref} — na próxima retomamos o ritmo.`);
+  if (a.volume && b.volume) {
+    const p = Math.round(pct(a.volume, b.volume));
+    if (p >= 5) l.push(`Mais ${p}% de volume do que ${ref} 📈`);
+    else if (p <= -5) l.push(`Menos ${-p}% de volume do que ${ref} — recuperar também faz parte do plano.`);
+    else l.push(`Volume semelhante ao ${refDa}.`);
+  }
+  if (a.distancia_m && b.distancia_m) {
+    const p = Math.round(pct(a.distancia_m, b.distancia_m));
+    if (p >= 5) l.push(`Mais ${p}% de distância do que ${ref} 🏃`);
+  }
+  return l;
+}
+
+// Exercício da semana: o maior recorde; sem recordes, o de maior volume.
+function melhorExercicio(prs, n) {
+  if (prs.length) {
+    const p = prs[0];
+    return { nome: p.nome, texto: `novo recorde: ${num(p.valor)} kg (1RM est.), +${num(p.valor - p.anterior)} kg` };
+  }
+  const top = Object.entries(n.porExercicio).sort((a, b) => b[1] - a[1])[0];
+  return top ? { nome: top[0], texto: `${num(top[1], 0)} kg de volume` } : null;
+}
+
+export function equivalentesSemana(c, segunda, n, cfg = cfgRelatorio()) {
+  const lista = repo.def('equivalentes');
+  const o = { min: cfg.equiv_min, max: cfg.equiv_max, semente: sementeSemana(c.id, segunda) };
+  const out = [];
+  const add = (tipo, total) => { const e = escolherEquivalente(lista, tipo, total, o); if (e) out.push(e); };
+  if (n.volume) add('peso', n.volume);
+  if (n.distancia_m) add('distancia', n.distancia_m);
+  if (!out.length && n.reps + n.pcReps) add('reps', n.reps);
+  if (!out.length && n.minutos) add('tempo', n.minutos);
+  return out.slice(0, 2);
+}
+
 // ---------------------------------------------------------------- Resumo semanal
 export function resumoSemana(c, segunda = inicioSemana(hojeISO())) {
   const domingo = somarDias(segunda, 6);
-  const sess = todos("SELECT * FROM sessoes WHERE cliente_id = ? AND estado = 'realizada' AND data BETWEEN ? AND ? ORDER BY data", [c.id, segunda, domingo]);
+  const cfg = cfgRelatorio();
+  const n = numerosPeriodo(c, segunda, domingo, cfg);
+  // Semana a decorrer: a anterior conta só até ao mesmo dia da semana (comparação justa).
+  const hoje = hojeISO();
+  const parcial = domingo > hoje && segunda <= hoje;
+  const ant = numerosPeriodo(c, somarDias(segunda, -7), parcial ? somarDias(hoje, -7) : somarDias(segunda, -1), cfg);
   const cons = consistencia(c.id);
+  const prs = prsPeriodo(c, segunda, domingo);
   return {
     de: segunda, ate: domingo,
-    sessoes: sess.length, combinado: c.frequencia_semanal || null,
-    minutos: Math.round(sess.reduce((a, s) => a + (s.duracao_seg || 0), 0) / 60),
-    prs: prsPeriodo(c, segunda, domingo),
+    ...n, combinado: c.frequencia_semanal || null,
+    porGrupo: Object.entries(n.porGrupo).sort((a, b) => b[1] - a[1]).map(([g, kg]) => [g, Math.round(kg)]),
+    prs,
+    melhor: melhorExercicio(prs, n),
+    comparacao: comparacaoSemanas(n, ant, parcial),
+    equivalentes: equivalentesSemana(c, segunda, n, cfg),
     streak: cons.streak, score: cons.score,
     metas: metasVisiveis(c),
     checkin: checkinSemana(c.id, segunda),
     foco: focoProximaSemana(c, segunda),
   };
 }
+
+// Tempo total: "45 min" ou "3 h 20 min".
+export const tempoTotal = (min) => (min >= 60 ? `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}` : `${min} min`);
+// Volume legível: até 1 t em kg; acima, em toneladas.
+export const textoVolume = (kg) => (kg >= 1000 ? `${num(kg / 1000, 1)} t` : `${num(kg, 0)} kg`);
 
 // ---------------------------------------------------------------- Relatório de período
 export function relatorioPeriodo(c, de, ate) {
@@ -161,7 +284,10 @@ export function mensagemWhatsApp(c, r, tipo = 'semana') {
   const l = [`Olá ${primeiro}! 💪`];
   if (tipo === 'semana') {
     l.push(`Resumo da semana ${dm(r.de)}–${dm(r.ate)}:`);
-    l.push(`✅ ${r.sessoes}${r.combinado ? `/${r.combinado}` : ''} treino(s)`);
+    l.push(`✅ ${r.sessoes}${r.combinado ? `/${r.combinado}` : ''} treino(s)${r.minutos ? ` · ${tempoTotal(r.minutos)}` : ''}`);
+    if (r.volume) l.push(`🏋️ ${textoVolume(r.volume)} de volume · ${r.series} séries · ${r.reps} repetições`);
+    if (r.equivalentes?.[0]) l.push(`${r.equivalentes[0].icone} ${r.equivalentes[0].texto}`);
+    if (r.distancia_m) l.push(`🏃 ${num(r.distancia_m / 1000, 1)} km${r.ritmoKm ? ` · ritmo médio ${tempo(r.ritmoKm)}/km` : ''}`);
     if (r.prs.length) l.push(`🏆 ${r.prs.length} recorde(s): ${r.prs.slice(0, 2).map((p) => `${p.nome} ${num(p.valor)} kg`).join(', ')}`);
     if (r.streak) l.push(`🔥 ${r.streak} semana(s) seguida(s) a cumprir o plano`);
     if (r.foco) l.push(`🎯 Foco da próxima semana: ${r.foco}`);

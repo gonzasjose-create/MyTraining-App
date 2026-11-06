@@ -92,36 +92,98 @@ function metas(ctx, y, lista, cor, max = 3) {
 
 const blob = (cv) => new Promise((res) => cv.toBlob(res, 'image/png'));
 
+// Mistura uma cor com branco (fundos suaves na cor da marca).
+function suave(hex, p) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  const c = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => Math.round(v * p + 255 * (1 - p)));
+  return `rgb(${c.join(',')})`;
+}
+// Grelha de KPIs com altura ajustável (até 3 por linha).
+function grelhaKpis(ctx, y, lista, cor, h = 170) {
+  const w = (L - 2 * M - 2 * 24) / 3;
+  lista.forEach(([valor, rotulo], i) => {
+    const x = M + (i % 3) * (w + 24), yy = y + Math.floor(i / 3) * (h + 20);
+    cartao(ctx, x, yy, w, h);
+    ctx.textAlign = 'center';
+    texto(ctx, valor, x + w / 2, yy + h * 0.5, { tam: 58, peso: 800, cor, larg: w - 20, max: 1 });
+    texto(ctx, rotulo, x + w / 2, yy + h * 0.82, { tam: 26, cor: '#5F6B7A', larg: w - 16, max: 1 });
+    ctx.textAlign = 'left';
+  });
+  return y + Math.ceil(lista.length / 3) * (h + 20);
+}
+const tempoTotal = (min) => (min >= 60 ? `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}` : `${min} min`);
+const vol = (kg) => (kg >= 1000 ? `${num(kg / 1000, 1)} t` : `${num(kg, 0)} kg`);
+
 // ---------------------------------------------------------------- Resumo semanal
 export async function imagemSemana(c, r) {
   const nome = c.nome.replace(/\(.*?\)/g, '').trim();
   const { cv, ctx, marca } = await base('Resumo da semana', `${dm(r.de)} – ${dm(r.ate)}`, nome);
-  let y = kpis(ctx, 420, [
-    [`${r.sessoes}${r.combinado ? `/${r.combinado}` : ''}`, 'treinos'],
-    [`🔥 ${r.streak}`, 'semanas seguidas'],
-    [`${r.prs.length}`, r.prs.length === 1 ? 'recorde' : 'recordes'],
-  ], marca.cor_principal);
+  const LIMITE = A - 150; // espaço do rodapé
+  const cabe = (y, h) => y + h <= LIMITE;
+  const lista = [[`${r.sessoes}${r.combinado ? `/${r.combinado}` : ''}`, 'treinos']];
+  if (r.minutos) lista.push([tempoTotal(r.minutos), 'tempo total']);
+  if (r.volume) lista.push([vol(r.volume), 'volume']);
+  if (r.series) lista.push([`${r.series}`, 'séries'], [`${r.reps}`, 'repetições']);
+  if (r.rpeMedio != null) lista.push([num(r.rpeMedio), 'RPE médio']);
+  else if (r.cargaMedia) lista.push([vol(r.cargaMedia), 'por sessão']);
+  let y = grelhaKpis(ctx, 400, lista.slice(0, 6), marca.cor_principal, 150);
+  if (r.pcReps && !r.pcIncluido) y = texto(ctx, `+ ${r.pcReps} repetições com peso corporal`, M, y + 20, { tam: 30, cor: '#5F6B7A' }) - 10;
 
-  if (r.prs.length) {
+  // Equivalente (o primeiro): cartão na cor da marca com ícone grande.
+  const eq = r.equivalentes?.[0];
+  if (eq && cabe(y + 10, 170)) {
+    y += 10;
+    cartao(ctx, M, y, L - 2 * M, 170, suave(marca.cor_secundaria, 0.16));
+    ctx.font = `100px ${FONTE}`;
+    ctx.fillText(eq.icone, M + 30, y + 122);
+    texto(ctx, eq.texto, M + 180, y + 70, { tam: 34, peso: 700, larg: L - 2 * M - 210, max: 3, alt: 1.25 });
+    y += 180;
+  }
+  if (r.distancia_m && cabe(y, 70)) {
+    y = texto(ctx, `🏃 ${num(r.distancia_m / 1000, 1)} km${r.ritmoKm ? ` · ritmo médio ${tempoMin(r.ritmoKm)}/km` : ''}`, M, y + 44, { tam: 36, peso: 600 });
+  }
+  // Volume por grupo (barras).
+  const grupos = (r.porGrupo || []).slice(0, 4);
+  if (grupos.length && cabe(y + 20, 60 + grupos.length * 50)) {
+    y = seccao(ctx, y + 44, 'Volume por grupo muscular');
+    const max = grupos[0][1], x0 = M + 250, larg = L - 2 * M - 250 - 150;
+    for (const [g, kg] of grupos) {
+      texto(ctx, g, M, y + 26, { tam: 30, larg: 240, max: 1 });
+      cartao(ctx, x0, y, larg, 30, '#E3E6EB');
+      ctx.fillStyle = marca.cor_secundaria;
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(x0, y, Math.max(30, larg * (kg / max)), 30, 15) : ctx.rect(x0, y, larg * (kg / max), 30);
+      ctx.fill();
+      ctx.textAlign = 'right';
+      texto(ctx, vol(kg), L - M, y + 26, { tam: 28, peso: 700, larg: 150 });
+      ctx.textAlign = 'left';
+      y += 50;
+    }
+  }
+  if (r.prs.length && cabe(y + 30, 110)) {
     y = seccao(ctx, y + 40, '🏆 Recordes da semana');
-    for (const p of r.prs.slice(0, 4)) y = texto(ctx, `${p.nome}: ${num(p.valor)} kg (1RM est.) · +${num(p.ganho, 0)}%`, M, y + 6, { tam: 34, max: 2 });
+    for (const p of r.prs.slice(0, 3)) if (cabe(y, 50)) y = texto(ctx, `${p.nome}: ${num(p.valor)} kg (+${num(p.valor - p.anterior)} kg)`, M, y + 6, { tam: 32, max: 1 });
+  } else if (r.melhor && cabe(y + 30, 110)) {
+    y = seccao(ctx, y + 40, '⭐ Exercício da semana');
+    y = texto(ctx, `${r.melhor.nome} — ${r.melhor.texto}`, M, y + 6, { tam: 32, max: 2 });
   }
-  if (r.metas.length) { y = seccao(ctx, y + 40, '🎯 Metas'); y = metas(ctx, y + 10, r.metas, marca.cor_secundaria); }
-  if (r.checkin) {
-    y = seccao(ctx, y + 30, '📝 Check-in');
-    y = texto(ctx, ESCALAS_CHECKIN.map((e) => `${e.nome.split(' ')[0]} ${r.checkin[e.id]}/5`).join('   ·   '), M, y + 6, { tam: 32, cor: '#5F6B7A' });
+  // Comparação: de preferência uma frase positiva; na imagem só a parte antes do "—".
+  const comp = r.comparacao?.find((x) => /^(Mais|O mesmo|Volume semelhante)/.test(x)) || r.comparacao?.[0];
+  if (comp && cabe(y + 20, 50)) y = texto(ctx, comp.split(' — ')[0], M, y + 30, { tam: 30, cor: '#1E8E5A', max: 2 });
+  // O foco (mensagem do treinador) vem antes da meta; o que não couber continua no PDF.
+  if (r.foco && cabe(y + 20, 140)) {
+    y += 20;
+    cartao(ctx, M, y, L - 2 * M, 140, '#EAF1FC');
+    texto(ctx, 'Foco da próxima semana', M + 36, y + 50, { tam: 28, peso: 700, cor: '#2A5DB0' });
+    texto(ctx, r.foco, M + 36, y + 98, { tam: 32, larg: L - 2 * M - 72, max: 1 });
+    y += 140;
   }
-  if (r.foco) {
-    y += 30;
-    cartao(ctx, M, y, L - 2 * M, 200, '#EAF1FC');
-    texto(ctx, 'Foco da próxima semana', M + 36, y + 64, { tam: 32, peso: 700, cor: '#2A5DB0' });
-    texto(ctx, r.foco, M + 36, y + 120, { tam: 36, larg: L - 2 * M - 72, max: 2 });
-    y += 230;
-  }
-  texto(ctx, 'Continua assim! 💪', M, Math.max(y + 60, A - 140), { tam: 44, peso: 800, cor: marca.cor_principal });
-  texto(ctx, marca.nome, M, A - 60, { tam: 28, cor: '#898781' });
+  if (r.metas.length && cabe(y + 20, 150)) { y = seccao(ctx, y + 40, '🎯 Meta'); y = metas(ctx, y + 6, r.metas, marca.cor_secundaria, 1); }
+  texto(ctx, `${r.streak ? `🔥 ${r.streak} semana${r.streak > 1 ? 's' : ''} seguida${r.streak > 1 ? 's' : ''} · ` : ''}Continua assim! 💪`, M, A - 95, { tam: 40, peso: 800, cor: marca.cor_principal, max: 1 });
+  texto(ctx, marca.nome, M, A - 40, { tam: 28, cor: '#898781' });
   return blob(cv);
 }
+const tempoMin = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
 
 // ---------------------------------------------------------------- Relatório de período
 export async function imagemRelatorio(c, r) {

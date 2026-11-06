@@ -125,7 +125,8 @@ export function mostrarErros(form, erros) {
 
 // ---------- Avisos rápidos ----------
 // Os avisos empilham-se num contentor (vários avisos seguidos não se sobrepõem).
-export function aviso(msg, tipo = 'ok') {
+// acoes: [{ texto, fn }] → botões no aviso (ex.: "Anular"); o aviso fecha ao tocar num deles.
+export function aviso(msg, tipo = 'ok', { acoes = [], duracao = null } = {}) {
   let pilha = document.querySelector('.toasts');
   if (!pilha) {
     pilha = Object.assign(document.createElement('div'), { className: 'toasts' });
@@ -133,12 +134,22 @@ export function aviso(msg, tipo = 'ok') {
     document.body.appendChild(pilha);
   }
   const el = document.createElement('div');
-  el.className = `toast toast-${tipo}`;
-  el.textContent = msg;
+  el.className = `toast toast-${tipo}${acoes.length ? ' toast-acoes' : ''}`;
+  const texto = document.createElement('span');
+  texto.textContent = msg;
+  el.appendChild(texto);
+  const fechar = () => { el.classList.add('sair'); setTimeout(() => el.remove(), 400); };
+  for (const a of acoes) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = a.texto;
+    b.onclick = () => { fechar(); a.fn(); };
+    el.appendChild(b);
+  }
   pilha.appendChild(el);
-  const dur = tipo === 'erro' ? 4500 : 2600;
-  setTimeout(() => el.classList.add('sair'), dur);
-  setTimeout(() => el.remove(), dur + 400);
+  const dur = duracao ?? (acoes.length ? 6000 : tipo === 'erro' ? 4500 : 2600);
+  setTimeout(fechar, dur);
+  return el;
 }
 
 // Lê um formulário para objeto simples (checkboxes → true/false).

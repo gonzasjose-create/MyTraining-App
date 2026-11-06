@@ -135,6 +135,29 @@ export const DEFINICOES_PADRAO = {
   agenda: { max_sessoes_dia: 6, max_horas_dia: 6, duracao_padrao_min: 60 },
   // Limiares dos alertas de análise.
   alertas_analise: { acwr_max: 1.5, rpe_alto: 9, dias_sem_treinar: 10, assiduidade_min_pct: 50, queda_pct: 5, semanas_estagnacao: 4 },
+  // ---- Relatório semanal ----
+  // volume_peso_corporal: incluir exercícios de peso corporal no volume em kg (último peso × % do exercício).
+  // equiv_min/max: nº de unidades aceite nos equivalentes ("cerca de 3 elefantes").
+  relatorio_semanal: { volume_peso_corporal: false, equiv_min: 1, equiv_max: 20 },
+  // Equivalentes (editáveis). tipo: peso (kg) | reps (repetições) | distancia (m) | tempo (min).
+  equivalentes: [
+    { nome: 'Melancia', tipo: 'peso', valor: 8, singular: 'melancia', plural: 'melancias', icone: '🍉', ativo: true },
+    { nome: 'Máquina de lavar', tipo: 'peso', valor: 70, singular: 'máquina de lavar roupa', plural: 'máquinas de lavar roupa', icone: '🧺', ativo: true },
+    { nome: 'Mota', tipo: 'peso', valor: 180, singular: 'mota', plural: 'motas', icone: '🏍️', ativo: true },
+    { nome: 'Piano de cauda', tipo: 'peso', valor: 450, singular: 'piano de cauda', plural: 'pianos de cauda', icone: '🎹', ativo: true },
+    { nome: 'Cavalo', tipo: 'peso', valor: 500, singular: 'cavalo', plural: 'cavalos', icone: '🐎', ativo: true },
+    { nome: 'Carro pequeno', tipo: 'peso', valor: 1000, singular: 'carro pequeno', plural: 'carros pequenos', icone: '🚗', ativo: true },
+    { nome: 'Elefante', tipo: 'peso', valor: 5000, singular: 'elefante', plural: 'elefantes', icone: '🐘', ativo: true },
+    { nome: 'Autocarro', tipo: 'peso', valor: 12000, singular: 'autocarro', plural: 'autocarros', icone: '🚌', ativo: true },
+    { nome: 'Baleia-azul', tipo: 'peso', valor: 100000, singular: 'baleia-azul', plural: 'baleias-azuis', icone: '🐋', ativo: true },
+    { nome: 'Torre dos Clérigos', tipo: 'reps', valor: 240, singular: 'subida à Torre dos Clérigos (240 degraus)', plural: 'subidas à Torre dos Clérigos (240 degraus)', icone: '🗼', ativo: true },
+    { nome: 'Minuto de corda', tipo: 'reps', valor: 120, singular: 'minuto de saltos à corda', plural: 'minutos de saltos à corda', icone: '🪢', ativo: true },
+    { nome: 'Campo de futebol', tipo: 'distancia', valor: 105, singular: 'campo de futebol', plural: 'campos de futebol', icone: '⚽', ativo: true },
+    { nome: 'Ponte 25 de Abril', tipo: 'distancia', valor: 2277, singular: 'travessia da Ponte 25 de Abril', plural: 'travessias da Ponte 25 de Abril', icone: '🌉', ativo: true },
+    { nome: 'Maratona', tipo: 'distancia', valor: 42195, singular: 'maratona', plural: 'maratonas', icone: '🏅', ativo: true },
+    { nome: 'Episódio de série', tipo: 'tempo', valor: 45, singular: 'episódio de série', plural: 'episódios de série', icone: '📺', ativo: true },
+    { nome: 'Jogo de futebol', tipo: 'tempo', valor: 90, singular: 'jogo de futebol', plural: 'jogos de futebol', icone: '⚽', ativo: true },
+  ],
 };
 
 // ---------- Metas, check-ins e pausas (Fase 5) ----------

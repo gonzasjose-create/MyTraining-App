@@ -3,7 +3,7 @@ import { todos, escalar, inserir, transacao, executar, lerDefinicao, gravarDefin
 import { guardarAvaliacao, guardarCliente } from './repo.js';
 import {
   criarPlano, adicionarSessao, adicionarExercicioPlano, gravarPrescricao, preencherSemanasVazias, definirEstado,
-  duplicarPlano, atualizarPlano, definirSemana,
+  duplicarPlano, atualizarPlano, definirSemana, ligarAoSeguinte, definirDescansosGrupo,
 } from './repo-planos.js';
 import { registarSessao } from './repo-sessoes.js';
 import { guardarTipoPacote, guardarPacote, guardarPagamento } from './repo-pacotes.js';
@@ -107,23 +107,34 @@ function aplicarBiblioteca(padroes, exercicios, resistencia, alternativas) {
 }
 
 // Versões da biblioteca: cada uma corre UMA vez por base de dados (mesmo que depois apagues exercícios).
-// v1 = biblioteca inicial · v2 = expansão (≈ 160 exercícios novos).
+// v1 = biblioteca inicial · v2 = expansão (≈ 160 exercícios novos) · v3 = % de peso corporal.
+// % do peso do cliente deslocado em cada exercício de peso corporal (editável na biblioteca).
+const PESO_CORPORAL_PCT = {
+  'Pull-up': 100, 'Chin-up': 100, 'Pull-up excêntrico': 100, 'Dips (paralelas)': 100,
+  'Flexões com pés elevados': 70, 'Flexões': 65, 'Flexões diamante': 65, 'Remada invertida': 60,
+  'Flexões inclinadas (mãos elevadas)': 50, 'Dips no banco': 50,
+};
 export function garantirBiblioteca() {
   let versao = lerDefinicao('biblioteca_versao') ?? (lerDefinicao('biblioteca_inicial') ? 1 : 0);
-  if (versao >= 2) return;
+  if (versao >= 3) return;
   transacao(() => {
     if (versao < 1) {
       aplicarBiblioteca(PADROES, EXERCICIOS, REGISTO_RESISTENCIA, ALTERNATIVAS);
       gravarDefinicao('biblioteca_inicial', true);
       versao = 1;
     }
-    aplicarBiblioteca(PADROES_V2, EXERCICIOS_V2, RESISTENCIA_V2, ALTERNATIVAS_V2);
-    // O "Curl femoral" da v1 não tinha padrão: passa a "Isolamento membros inferiores" se continuar sem padrão.
-    executar(
-      `UPDATE exercicios SET padrao_id = (SELECT id FROM padroes_movimento WHERE nome = 'Isolamento membros inferiores')
-       WHERE nome = 'Curl femoral' AND padrao_id IS NULL`
-    );
-    gravarDefinicao('biblioteca_versao', 2);
+    if (versao < 2) {
+      aplicarBiblioteca(PADROES_V2, EXERCICIOS_V2, RESISTENCIA_V2, ALTERNATIVAS_V2);
+      // O "Curl femoral" da v1 não tinha padrão: passa a "Isolamento membros inferiores" se continuar sem padrão.
+      executar(
+        `UPDATE exercicios SET padrao_id = (SELECT id FROM padroes_movimento WHERE nome = 'Isolamento membros inferiores')
+         WHERE nome = 'Curl femoral' AND padrao_id IS NULL`
+      );
+    }
+    // Não altera valores que o treinador já tenha definido.
+    for (const [nome, pct] of Object.entries(PESO_CORPORAL_PCT))
+      executar('UPDATE exercicios SET peso_corporal_pct = ? WHERE nome = ? AND peso_corporal_pct IS NULL', [pct, nome]);
+    gravarDefinicao('biblioteca_versao', 3);
   });
 }
 
@@ -321,6 +332,16 @@ function carregarSessoesExemplo({ ana, bruno, carla }, { pa, pb, pc }) {
   realizado(caA, 'Agachamento livre', 4, { carga_kg: 72.5, reps: 5, rpe: 8.5 });
   etiq(caA, 'boa técnica', 'Agachamento livre');
 
+  // Semana atual (resumo semanal completo): supersérie supino + pull-up, série de aquecimento,
+  // pull-ups com o peso corporal e corrida com distância. Ontem (ou hoje, se for segunda) → semana atual.
+  const diaExtra = new Date().getDay() === 1 ? 0 : 1;
+  const anaB3 = doPlano(ana, pa, 'B — Superiores', 3, diaExtra, '18:30', { rpe_sessao: 8, notas: 'Supersérie supino + pull-up a correr bem.' });
+  realizado(anaB3, 'Supino com barra', 1, { aquecimento: 1, carga_kg: 20, reps: 10, rpe: null });
+  [2, 3, 4].forEach((n) => realizado(anaB3, 'Supino com barra', n, { carga_kg: 40, reps: 6 })); // mantém o caso de estagnação
+  realizado(anaB3, 'Pull-up', 4, { reps: 5 });
+  const brA2 = doPlano(bruno, pb, 'A — Contínuo', 2, diaExtra, '19:00');
+  realizado(brA2, 'Corrida contínua', 1, { fc_media: 138, rpe: 4, distancia_m: 5600 });
+
   // ---- Fase 4: histórico para análise e gráficos ----
   // Ana — "Bloco 1" concluído (8 a 5 semanas atrás), com cargas mais baixas: dá tendência ao 1RM est.,
   // comparação entre blocos e um caso de ESTAGNAÇÃO no supino (40 kg × 6 em todos os registos).
@@ -477,6 +498,14 @@ function carregarPlanosExemplo({ ana, bruno, carla }) {
     ]
   );
   definirEstado(pa, 'ativo');
+  // Supersérie A1/A2 na sessão B (supino + pull-up): sem descanso entre os dois, 2:30 no fim de cada ronda.
+  const supino = todos(
+    `SELECT pe.id, pe.sessao_id FROM plano_exercicios pe JOIN plano_sessoes s ON s.id = pe.sessao_id
+     JOIN exercicios e ON e.id = pe.exercicio_id WHERE s.plano_id = ? AND e.nome = 'Supino com barra'`, [pa])[0];
+  if (supino) {
+    ligarAoSeguinte('plano_exercicios', supino.id);
+    definirDescansosGrupo('plano_exercicios', supino.sessao_id, 1, null, 150);
+  }
 
   // Bruno — resistência (os intervalos de corrida estão marcados como "adaptar").
   const pb = criarPlanoExemplo(

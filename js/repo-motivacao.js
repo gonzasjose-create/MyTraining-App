@@ -19,7 +19,7 @@ export function linhaTemporal(m) {
     const series = todos(
       `SELECT s.data, y.carga_kg, y.reps FROM sessao_series y JOIN sessao_exercicios x ON x.id = y.sessao_exercicio_id
        JOIN sessoes s ON s.id = x.sessao_id WHERE s.cliente_id = ? AND x.exercicio_id = ? AND s.estado = 'realizada'
-       AND y.estado = 'feita' AND y.qualidade >= 1`,
+       AND y.estado = 'feita' AND y.qualidade >= 1 AND y.aquecimento = 0`,
       [c, m.exercicio_id]
     );
     const testes = todos(

@@ -14,6 +14,8 @@ import { checkinSemana } from '../repo-motivacao.js';
 import { obterCliente } from '../repo.js';
 import { dialogoCheckin } from './metas.js';
 import { entrarModoCliente } from './modo-cliente.js';
+import { rotulosGrupos, rotulo, membrosGrupo, nomeGrupo, seguinteNoGrupo, descansoGrupo } from '../superseries.js';
+import { confirmarLigacao, dialogoDescansosGrupo } from './planos.js';
 
 const cfgTreino = () => ({ ...DEFINICOES_PADRAO.modo_treino, ...def('modo_treino') });
 const etiquetasDisp = () => def('etiquetas');
@@ -21,6 +23,37 @@ const etiquetasDisp = () => def('etiquetas');
 // Estado da interface (não persistente): exercício em foco e passo de carga escolhido.
 let ui = { sessaoId: null, sexAtual: null, passo: null };
 let sMem = null; // sessão em memória para o relógio
+// O exercício em foco também fica guardado localmente (ao recarregar, a supersérie retoma no exercício certo).
+// A sessão identifica-se pelo id E pela hora de início (o SQLite pode reutilizar o id de uma sessão cancelada).
+const CHAVE_ATUAL = 'treino:atual';
+const idTreino = (s) => `${s.id}|${s.hora_inicio}`;
+function lerAtual(s) {
+  try { const a = JSON.parse(localStorage.getItem(CHAVE_ATUAL)); return a?.treino === idTreino(s) ? a.sexId : null; } catch { return null; }
+}
+function gravarAtual(s, sexId) {
+  try { localStorage.setItem(CHAVE_ATUAL, JSON.stringify({ treino: idTreino(s), sexId })); } catch { /* sem storage */ }
+}
+const pendentes = (e) => e.series.filter((x) => x.estado === 'pendente').length;
+// Sem foco guardado: no grupo, o exercício com menos séries feitas (alternância A1, A2, A1…).
+function primeiroPorFazer(s) {
+  const e = s.exercicios.find((x) => x.estado === 'pendente');
+  if (!e || e.grupo_id == null) return e;
+  const membros = membrosGrupo(s.exercicios, e.grupo_id).filter((m) => pendentes(m));
+  const feitas = (m) => m.series.length - pendentes(m);
+  return membros.reduce((a, b) => (feitas(b) < feitas(a) ? b : a), membros[0]);
+}
+// Para onde ir depois de terminar a série "serieId" de "e": no grupo alterna (ordem circular, salta
+// quem já acabou); fora de grupo continua no mesmo até acabar e depois passa ao seguinte por fazer.
+function seguinteDepois(s, e, serieId) {
+  const resta = (m) => m.series.some((y) => y.estado === 'pendente' && y.id !== serieId);
+  const membros = e.grupo_id != null ? membrosGrupo(s.exercicios, e.grupo_id) : null;
+  if (membros) {
+    const r = seguinteNoGrupo(membros, e.id, resta);
+    if (r) return { ...r, membros };
+  } else if (resta(e)) return { ex: e, volta: true, membros };
+  const outro = s.exercicios.find((x) => x.id !== e.id && (membros ? x.grupo_id !== e.grupo_id : true) && resta(x));
+  return { ex: outro || null, volta: true, membros };
+}
 
 export function vistaSessao(el, { sessaoId }) {
   const s = rs.obterSessao(+sessaoId);
@@ -92,7 +125,7 @@ function largarWakeLock() {
 // ====================================================================== MODO TREINO
 function vistaVivo(el, s) {
   document.body.classList.add('modo-treino');
-  if (ui.sessaoId !== s.id) ui = { sessaoId: s.id, sexAtual: null, passo: null };
+  if (ui.sessaoId !== idTreino(s)) ui = { sessaoId: idTreino(s), sexAtual: lerAtual(s), passo: null };
   const render = () => {
     const s2 = rs.obterSessao(s.id);
     if (!s2 || s2.estado !== 'em_curso') return void (location.hash = s2 ? `#/sessao/${s.id}` : '#/');
@@ -120,7 +153,7 @@ function tick() {
   const barra = document.getElementById('descanso');
   if (!barra) return;
   const d = descanso();
-  if (!d || d.sessaoId !== sMem.id) { barra.hidden = true; return; }
+  if (!d || d.sessaoId !== idTreino(sMem)) { barra.hidden = true; return; }
   const restante = d.fim ? Math.ceil((d.fim - Date.now()) / 1000) : d.restantePausa;
   barra.hidden = false;
   barra.classList.toggle('fim', restante <= 0);
@@ -131,9 +164,10 @@ function tick() {
   if (restante < -8) gravarDescanso(null);
 }
 
-function iniciarDescanso(seg) {
+// serieId: série que originou o descanso (se for eliminada, o descanso pára).
+function iniciarDescanso(seg, serieId = null) {
   if (!seg) return;
-  gravarDescanso({ sessaoId: sMem.id, fim: Date.now() + seg * 1000, total: seg, avisado: false });
+  gravarDescanso({ sessaoId: idTreino(sMem), serieId, fim: Date.now() + seg * 1000, total: seg, avisado: false });
   tick();
 }
 
@@ -142,8 +176,14 @@ function desenharVivo(el, s, render) {
   sMem = s;
   const cfg = cfgTreino();
   ui.passo ??= cfg.passo_kg;
-  const atual = s.exercicios.find((e) => e.id === ui.sexAtual) || s.exercicios.find((e) => e.estado === 'pendente') || s.exercicios[0];
+  const atual = s.exercicios.find((e) => e.id === ui.sexAtual) || primeiroPorFazer(s) || s.exercicios[0];
   ui.sexAtual = atual?.id ?? null;
+  gravarAtual(s, ui.sexAtual);
+  // Supersérie: rótulos A1/A2… e o exercício "a seguir" (destacado na lista).
+  const rot = rotulosGrupos(s.exercicios);
+  const editarId = atual?.series.find((x) => x.estado === 'pendente')?.id;
+  const aSeguir = atual?.grupo_id != null && editarId ? seguinteDepois(s, atual, editarId).ex : null;
+  const proxId = aSeguir && aSeguir.id !== atual.id ? aSeguir.id : null;
   const feitas = s.exercicios.reduce((n, e) => n + e.series.filter((x) => x.estado === 'feita').length, 0);
   const total = s.exercicios.reduce((n, e) => n + e.series.length, 0);
 
@@ -170,8 +210,8 @@ function desenharVivo(el, s, render) {
       : html`<div class="vivo-lista">
           ${s.exercicios.map((e) => (e.id === ui.sexAtual
             // No tablet, o exercício atual aparece também na lista da esquerda (marcado) e o cartão à direita.
-            ? html`${cartaoFechado(s, e, true)}${cartaoAtual(s, e, cfg)}`
-            : cartaoFechado(s, e)))}
+            ? html`${cartaoFechado(s, e, true, rot)}${cartaoAtual(s, e, cfg, rot, aSeguir)}`
+            : cartaoFechado(s, e, false, rot, e.id === proxId)))}
           ${s.exercicios.length ? '' : html`<p class="ajuda centro">Sessão livre: acrescenta os exercícios à medida que avanças.</p>`}
         </div>
         <button class="btn btn-sec btn-largo" data-acao="add-ex">+ Acrescentar exercício</button>`}
@@ -205,15 +245,35 @@ const textoSerie = (x) =>
 const textoPlano = (x) =>
   x.plan_texto || [x.plan_carga_kg != null ? `${num(x.plan_carga_kg)} kg` : null, x.plan_reps != null ? `× ${x.plan_reps}` : null, x.plan_rpe != null ? `RPE ${num(x.plan_rpe)}` : null].filter(Boolean).join(' ');
 
-function cartaoFechado(s, e, marcador = false) {
+function cartaoFechado(s, e, marcador = false, rot = new Map(), seguinte = false) {
   const f = e.series.filter((x) => x.estado === 'feita').length;
   const icone = marcador ? '▶' : e.estado === 'feito' ? '✓' : e.estado === 'saltado' ? '—' : '○';
-  return html`<button class="ex-fechado estado-${e.estado} ${marcador ? 'ex-marcador' : ''}" data-acao="selecionar" data-sex="${e.id}" ${marcador ? raw('aria-current="true"') : ''}>
-    <span class="ex-icone">${icone}</span><span class="ex-nome">${e.nome}</span><span class="ex-cont">${f}/${e.series.length}</span>
+  const r = rot.get(e.id);
+  return html`<button class="ex-fechado estado-${e.estado} ${marcador ? 'ex-marcador' : ''} ${r ? 'em-grupo' : ''} ${seguinte ? 'a-seguir' : ''}" data-acao="selecionar" data-sex="${e.id}" ${marcador ? raw('aria-current="true"') : ''}>
+    <span class="ex-icone">${icone}</span>${r ? html`<span class="rotulo-grupo">${rotulo(r)}</span>` : ''}<span class="ex-nome">${e.nome}${seguinte ? html` <span class="tag tag-seguir">a seguir</span>` : ''}</span><span class="ex-cont">${f}/${e.series.length}</span>
   </button>`;
 }
 
-function cartaoAtual(s, e, cfg) {
+// Faixa da supersérie no cartão atual: posição na ronda e o que vem a seguir (toque = descansos / desligar).
+function faixaGrupo(s, e, rot, aSeguir) {
+  const r = rot.get(e.id);
+  if (!r) return '';
+  const membros = membrosGrupo(s.exercicios, e.grupo_id);
+  const ra = aSeguir && rot.get(aSeguir.id);
+  const ultimo = membros[membros.length - 1];
+  const fimRonda = `fim da ronda${ultimo.descanso_apos_seg ? ` · descanso ${tempo(ultimo.descanso_apos_seg)}` : ''}`;
+  const texto = !aSeguir || aSeguir.grupo_id !== e.grupo_id ? `Última série da supersérie${aSeguir ? ` · depois: ${aSeguir.nome}` : ''}`
+    : aSeguir.id === e.id ? `Só falta ${rotulo(r)}: continua sozinho · ${fimRonda}`
+    : `A seguir: ${rotulo(ra)} · ${aSeguir.nome} · ${ra.n > r.n ? (e.descanso_apos_seg ? `descanso ${tempo(e.descanso_apos_seg)}` : 'sem descanso') : fimRonda}`;
+  return html`<button type="button" class="faixa-grupo" data-acao="grupo-cfg" data-sex="${e.id}" aria-label="Descansos da supersérie">
+    <span>⛓ ${nomeGrupo(membros.length)} ${r.letra} · ${membros.map((m) => rotulo(rot.get(m.id))).join(' + ')}</span>
+    <small>${texto}</small>
+  </button>`;
+}
+
+function cartaoAtual(s, e, cfg, rot = new Map(), aSeguir = null) {
+  const seg = s.exercicios[s.exercicios.indexOf(e) + 1];
+  const ligadoAoSeguinte = seg && e.grupo_id != null && seg.grupo_id === e.grupo_id;
   const resist = e.tipo_registo === 'resistencia';
   const hist = resist ? { ultima: null, melhor: null } : rs.historicoExercicio(s.cliente_id, e.exercicio_id, s.id);
   const ci = verificarContraindicacao(s.cliente_id, e.exercicio_id);
@@ -223,18 +283,19 @@ function cartaoAtual(s, e, cfg) {
 
   return html`<section class="cartao ex-atual" data-sex="${e.id}">
     <div class="cartao-cab">
-      <h2>${e.nome}</h2>
+      <h2>${rot.get(e.id) ? html`<span class="rotulo-grupo">${rotulo(rot.get(e.id))}</span> ` : ''}${e.nome}</h2>
       <div class="botoes">
         <button class="btn btn-sec btn-icone" data-acao="mover" data-dir="-1" data-sex="${e.id}" aria-label="Subir">↑</button>
         <button class="btn btn-sec btn-icone" data-acao="mover" data-dir="1" data-sex="${e.id}" aria-label="Descer">↓</button>
       </div>
     </div>
+    ${faixaGrupo(s, e, rot, aSeguir)}
     ${e.substituido_nome ? html`<p class="ajuda">Substitui: ${e.substituido_nome}</p>` : ''}
     ${e.notas_plano ? html`<p class="ajuda">Plano: ${e.notas_plano}</p>` : ''}
     ${ci.contraindicado ? html`<div class="caixa ${ci.nivel === 'evitar' ? 'caixa-alerta' : 'caixa-aviso'}"><strong>⚠ ${ci.nivel === 'evitar' ? 'Contraindicado' : 'Adaptar'}</strong>
       ${ci.alternativas.length ? html` — alternativas: ${ci.alternativas.map((a) => a.nome).join(', ')}` : ''}</div>` : ''}
     ${!resist ? html`<div class="referencias">
-      <div><span>Última${ultima ? ` (${data(ultima.data).slice(0, 5)})` : ''}</span><strong>${ultima ? ultima.series.map((x) => `${num(x.carga_kg)}×${x.reps}`).join(' · ') : '—'}</strong>
+      <div><span>Última${ultima ? ` (${data(ultima.data).slice(0, 5)})` : ''}</span><strong>${ultima ? ultima.series.map((x) => (x.carga_kg != null ? `${num(x.carga_kg)}×${x.reps}` : `${x.reps} reps`)).join(' · ') : '—'}</strong>
         ${ultima?.series.some((x) => x.rpe) ? html`<small>RPE ${ultima.series.filter((x) => x.rpe).map((x) => num(x.rpe)).join('/')}</small>` : ''}</div>
       <div><span>Melhor 1RM est.</span><strong>${hist.melhor ? `${num(hist.melhor.valor)} kg` : '—'}</strong>
         ${hist.melhor ? html`<small>${num(hist.melhor.carga)}×${hist.melhor.reps} · ${data(hist.melhor.data).slice(0, 5)}${hist.melhor.fonte === 'avaliação' ? ' (aval.)' : ''}</small>` : ''}</div>
@@ -249,6 +310,7 @@ function cartaoAtual(s, e, cfg) {
       <button class="btn btn-sec btn-peq" data-acao="substituir" data-sex="${e.id}">⇄ Substituir</button>
       ${e.estado === 'pendente' ? html`<button class="btn btn-sec btn-peq" data-acao="saltar-ex" data-sex="${e.id}">Saltar exercício</button>` : ''}
       ${e.plano_exercicio_id ? '' : html`<button class="btn btn-sec btn-peq" data-acao="remover-ex" data-sex="${e.id}">Remover</button>`}
+      ${seg && !ligadoAoSeguinte ? html`<button class="btn btn-sec btn-peq" data-acao="ligar" data-sex="${e.id}" title="Alternar série a série com ${seg.nome}">⛓ Supersérie com ${seg.nome}</button>` : ''}
     </div>
     <details class="mais-serie" ${e.notas || e.etiquetas.length ? raw('open') : ''}>
       <summary>Nota e etiquetas do exercício${e.notas || e.etiquetas.length ? ' •' : ''}</summary>
@@ -258,18 +320,21 @@ function cartaoAtual(s, e, cfg) {
   </section>`;
 }
 
+// Botão de eliminar (à esquerda da linha, longe dos botões de concluir/editar).
+const btnEliminar = (x) => html`<button class="btn-lixo" data-acao="eliminar" data-serie="${x.id}" aria-label="Eliminar série ${x.n}" title="Eliminar série">🗑</button>`;
+
 function linhaSerie(x, melhor, resist) {
   if (x.estado === 'pendente')
-    return html`<div class="serie-linha pendente"><span class="n">${x.n}</span><span>${textoPlano(x) || 'por fazer'}</span></div>`;
+    return html`<div class="serie-linha pendente">${btnEliminar(x)}<span class="n">${x.n}</span><span>${textoPlano(x) || 'por fazer'}</span></div>`;
   if (x.estado === 'saltada')
-    return html`<div class="serie-linha saltada"><span class="n">${x.n}</span><span>saltada</span>
+    return html`<div class="serie-linha saltada">${btnEliminar(x)}<span class="n">${x.n}</span><span>saltada</span>
       <button class="btn btn-sec btn-icone" data-acao="reabrir" data-serie="${x.id}" aria-label="Reabrir">↺</button></div>`;
-  const r = !resist && x.qualidade >= 1 ? epley(x.carga_kg, x.reps) : null;
+  const r = !resist && x.qualidade >= 1 && !x.aquecimento ? epley(x.carga_kg, x.reps) : null;
   const pr = r && melhor != null && r.valor > melhor;
   const txt = resist ? [x.duracao_seg ? tempo(x.duracao_seg) : null, x.distancia_m ? `${num(x.distancia_m / 1000, 2)} km` : null, x.fc_media ? `${x.fc_media} bpm` : null, x.rpe ? `RPE ${num(x.rpe)}` : null].filter(Boolean).join(' · ') : textoSerie(x);
-  return html`<div class="serie-linha feita"><span class="n">✓ ${x.n}</span>
+  return html`<div class="serie-linha feita">${btnEliminar(x)}<span class="n">✓ ${x.n}</span>
     <span>${txt}${r ? html` <small>· 1RM ${num(r.valor)}</small>` : ''}${pr ? html` <span class="tag tag-pr">PR</span>` : ''}
-      ${x.qualidade === 0 ? html` <span class="tag tag-aviso">técnica 0</span>` : ''}${x.dor ? html` <span class="tag tag-alerta">dor${x.dor_local ? `: ${x.dor_local}` : ''}</span>` : ''}
+      ${x.aquecimento ? html` <span class="tag">aquec.</span>` : ''}${x.qualidade === 0 ? html` <span class="tag tag-aviso">técnica 0</span>` : ''}${x.dor ? html` <span class="tag tag-alerta">dor${x.dor_local ? `: ${x.dor_local}` : ''}</span>` : ''}
       ${x.notas ? html`<br><small>${x.notas}</small>` : ''}</span>
     <button class="btn btn-sec btn-icone" data-acao="reabrir" data-serie="${x.id}" aria-label="Editar série">✎</button></div>`;
 }
@@ -298,7 +363,7 @@ function editorSerie(s, e, x, cfg, melhor, resist) {
 
   if (resist)
     return html`<div class="serie-editor" data-serie="${x.id}">
-      <div class="se-cab"><strong>${e.nome}</strong>${x.plan_texto ? html` <small>plano: ${x.plan_texto}</small>` : ''}</div>
+      <div class="se-cab"><div><strong>${e.nome}</strong>${x.plan_texto ? html` <small>plano: ${x.plan_texto}</small>` : ''}</div>${btnEliminar(x)}</div>
       <div class="grelha-2">
         ${campo(`dur_${x.id}`, 'Duração (m:ss ou h:mm:ss)', { valor: x.duracao_seg ? tempo(x.duracao_seg) : '', attrs: `data-campo="duracao" inputmode="numeric"` })}
         ${campo(`dist_${x.id}`, 'Distância (km)', { tipo: 'number', valor: x.distancia_m ? x.distancia_m / 1000 : '', attrs: 'data-campo="distancia"' })}
@@ -312,9 +377,9 @@ function editorSerie(s, e, x, cfg, melhor, resist) {
     </div>`;
 
   const ant = e.series.filter((y) => y.n < x.n && y.estado === 'feita').pop();
-  const r = x.qualidade >= 1 ? epley(x.carga_kg, x.reps) : null;
+  const r = x.qualidade >= 1 && !x.aquecimento ? epley(x.carga_kg, x.reps) : null;
   return html`<div class="serie-editor" data-serie="${x.id}">
-    <div class="se-cab"><strong>Série ${x.n} de ${totalSeries}</strong>${textoPlano(x) ? html` <small>plano: ${textoPlano(x)}${x.plan_rir != null ? ` · RIR ${x.plan_rir}` : ''}</small>` : ''}</div>
+    <div class="se-cab"><div><strong>Série ${x.n} de ${totalSeries}</strong>${textoPlano(x) ? html` <small>plano: ${textoPlano(x)}${x.plan_rir != null ? ` · RIR ${x.plan_rir}` : ''}</small>` : ''}</div>${btnEliminar(x)}</div>
     ${ajuste('Carga', 'carga_kg', x.carga_kg, 'kg')}
     <div class="passos" role="group" aria-label="Passo da carga">
       ${[1, 2.5, 5].map((p) => html`<button type="button" class="chip ${ui.passo === p ? 'ativo' : ''}" data-acao="passo" data-v="${p}">±${num(p)}</button>`)}
@@ -327,6 +392,7 @@ function editorSerie(s, e, x, cfg, melhor, resist) {
         ${[0, 1, 2].map((q) => html`<button type="button" class="${x.qualidade === q ? 'ativo' : ''}" data-acao="qualidade" data-v="${q}" title="${['falha (não conta)', 'aceitável', 'boa'][q]}">Q${q}</button>`)}
       </div>
       ${dor}
+      <button type="button" class="chip ${x.aquecimento ? 'ativo' : ''}" data-acao="aquecimento" aria-pressed="${x.aquecimento ? 'true' : 'false'}" title="Série de aquecimento: fica registada, mas não conta para volume, recordes nem 1RM">Aquec.</button>
     </div>
     <div class="e1rm" id="e1rm" data-melhor="${melhor ?? ''}">${raw(textoE1rm(r, melhor))}</div>
     <div class="acoes-serie">
@@ -364,6 +430,7 @@ function lerSerieDoEditor(ed) {
   return {
     carga_kg: lerNum(v('carga_kg')), reps: lerNum(v('reps')), rpe: lerNum(v('rpe')), rir: lerNum(v('rir')),
     qualidade: q ? +q.dataset.v : 2,
+    aquecimento: ed.querySelector('[data-acao="aquecimento"]')?.classList.contains('ativo') ? 1 : 0,
     dor: ed.querySelector('[data-acao="dor"]')?.classList.contains('ativo') ? 1 : 0,
     dor_local: v('dor_local')?.trim() || null, notas: v('notas')?.trim() || null,
     duracao_txt: v('duracao'), distancia_km: lerNum(v('distancia')), fc_media: lerNum(v('fc_media')),
@@ -388,7 +455,7 @@ export function validarSerie(d, resist) {
   if (d.reps == null) return erro('Indica as repetições feitas.');
   if (nan(d.rpe) || (d.rpe != null && (d.rpe < 1 || d.rpe > 10 || (d.rpe * 2) % 1))) return erro('RPE entre 1 e 10, em passos de 0,5.');
   if (nan(d.rir) || (d.rir != null && (d.rir < 0 || d.rir > 10 || !Number.isInteger(d.rir)))) return erro('RIR inteiro entre 0 e 10.');
-  return { ok: true, campos: { carga_kg: d.carga_kg, reps: d.reps, rpe: d.rpe, rir: d.rir, qualidade: d.qualidade, dor: d.dor, dor_local: d.dor ? d.dor_local : null, notas: d.notas } };
+  return { ok: true, campos: { carga_kg: d.carga_kg, reps: d.reps, rpe: d.rpe, rir: d.rir, qualidade: d.qualidade, aquecimento: d.aquecimento ? 1 : 0, dor: d.dor, dor_local: d.dor ? d.dor_local : null, notas: d.notas } };
 }
 
 let guardarAtraso = null;
@@ -416,11 +483,42 @@ function ligarEventosVivo(el, s, render) {
     if (!alvo) return;
     const d = lerSerieDoEditor(ed);
     const melhor = alvo.dataset.melhor === '' ? null : +alvo.dataset.melhor;
-    alvo.innerHTML = textoE1rm(d.qualidade >= 1 ? epley(d.carga_kg, d.reps) : null, melhor);
+    alvo.innerHTML = textoE1rm(d.qualidade >= 1 && !d.aquecimento ? epley(d.carga_kg, d.reps) : null, melhor);
   };
 
   el.oninput = (ev) => {
     if (ev.target.closest('.serie-editor')) { atualizarE1rm(); agendarGravacao(); }
+  };
+
+  // Elimina a série (grava logo), pára o descanso que ela tenha iniciado e oferece "Anular".
+  const aplicarEliminacao = async (e, id, tambemPlano, oferecerPlano = false) => {
+    const copia = rs.eliminarSerie(id);
+    if (!copia) return;
+    let doPlano = !!(tambemPlano && rs.ajustarSeriesPlano(e.id, -1));
+    if (descanso()?.serieId === id) gravarDescanso(null);
+    render();
+    const acoes = [{
+      texto: 'Anular',
+      fn: () => {
+        try {
+          rs.anularEliminacao(copia);
+          if (doPlano) rs.ajustarSeriesPlano(e.id, +1);
+          ui.sexAtual = e.id;
+          render();
+        } catch {
+          aviso('Já não é possível anular (o exercício foi removido).', 'erro');
+        }
+      },
+    }];
+    if (oferecerPlano && !doPlano)
+      acoes.push({ texto: 'Também do plano', fn: () => { doPlano = rs.ajustarSeriesPlano(e.id, -1); aviso(doPlano ? 'Removida também do plano.' : 'O plano já tem só 1 série.', 'info'); } });
+    aviso(`Série ${copia.serie.n} eliminada${doPlano ? ' (também do plano)' : ''}`, 'info', { acoes });
+    if (rs.seriesDoExercicio(e.id) === 0 &&
+      (await confirmar(`${e.nome} ficou sem séries. Remover o exercício desta sessão?`, { textoOk: 'Remover', perigo: false }))) {
+      rs.apagarExercicioSessao(e.id);
+      ui.sexAtual = null;
+      render();
+    }
   };
   el.onchange = (ev) => {
     const t = ev.target;
@@ -483,6 +581,12 @@ function ligarEventosVivo(el, s, render) {
         atualizarE1rm();
         agendarGravacao();
         return;
+      case 'aquecimento':
+        b.classList.toggle('ativo');
+        b.setAttribute('aria-pressed', b.classList.contains('ativo'));
+        atualizarE1rm();
+        agendarGravacao();
+        return;
       case 'dor': {
         b.classList.toggle('ativo');
         b.classList.toggle('chip-dor');
@@ -515,20 +619,67 @@ function ligarEventosVivo(el, s, render) {
         const e = s.exercicios.find((x) => x.series.some((y) => y.id === id));
         const serie = e.series.find((y) => y.id === id);
         rs.concluirSerie(id, r.campos);
-        // Descanso: o do plano ou o valor por defeito (exceto depois da última série do treino).
-        const restamSeries = s.exercicios.some((x) => x.series.some((y) => y.estado === 'pendente' && y.id !== id));
-        if (restamSeries && !resist) iniciarDescanso(serie.plan_descanso_seg || cfg.descanso_padrao_seg);
-        // Se o exercício ficou completo, passa ao seguinte por fazer.
-        if (!e.series.some((y) => y.estado === 'pendente' && y.id !== id)) {
-          const seguinte = s.exercicios.find((x) => x.id !== e.id && x.estado === 'pendente');
-          if (seguinte) ui.sexAtual = seguinte.id;
+        const prox = seguinteDepois(s, e, id);
+        // Descanso (exceto depois da última série do treino): numa supersérie, a meio da ronda usa o
+        // descanso entre exercícios (por defeito nenhum) e no fim da ronda o descanso da ronda;
+        // fora de grupo, o do plano ou o valor por defeito.
+        if (prox.ex && !resist) {
+          iniciarDescanso(prox.membros
+            ? descansoGrupo(prox.membros, e, prox.volta, serie.plan_descanso_seg, cfg.descanso_padrao_seg)
+            : serie.plan_descanso_seg || cfg.descanso_padrao_seg, id);
         }
+        if (prox.ex) ui.sexAtual = prox.ex.id;
         return render();
       }
-      case 'saltar-serie':
+      case 'saltar-serie': {
+        // Saltar também avança na supersérie (sem descanso).
         clearTimeout(guardarAtraso);
-        rs.saltarSerie(serieId());
+        const id = serieId();
+        const e = s.exercicios.find((x) => x.series.some((y) => y.id === id));
+        rs.saltarSerie(id);
+        const prox = seguinteDepois(s, e, id);
+        if (prox.ex) ui.sexAtual = prox.ex.id;
         return render();
+      }
+      case 'ligar': {
+        const e = ex(b.dataset.sex);
+        const seg = s.exercicios[s.exercicios.indexOf(e) + 1];
+        const contra = [e, seg].map((x) => ({ nome: x.nome, ci: verificarContraindicacao(s.cliente_id, x.exercicio_id) }))
+          .filter((x) => x.ci.contraindicado).map((x) => ({ nome: x.nome, nivel: x.ci.nivel }));
+        if (!(await confirmarLigacao(contra))) return;
+        rs.ligarExercicioAoSeguinte(e.id);
+        aviso(`${e.nome} + ${seg.nome} em supersérie: alternam série a série.`);
+        return render();
+      }
+      case 'grupo-cfg': {
+        const e = ex(b.dataset.sex);
+        const membros = membrosGrupo(s.exercicios, e.grupo_id);
+        // "Desligar" separa o exercício atual do seguinte (ou, se for o último, do anterior).
+        const k = membros.indexOf(e);
+        const par = k < membros.length - 1 ? [e, membros[k + 1]] : [membros[k - 1], e];
+        return dialogoDescansosGrupo({
+          membros, entre: par,
+          onGuardar: (intra, ronda) => { rs.descansosGrupoSessao(s.id, e.grupo_id, intra, ronda); render(); },
+          onDesligar: () => { rs.desligarExercicioDoSeguinte(par[0].id); aviso(`${par[0].nome} e ${par[1].nome} já não estão ligados.`); render(); },
+        });
+      }
+      case 'eliminar': {
+        clearTimeout(guardarAtraso);
+        const id = +b.dataset.serie;
+        const e = s.exercicios.find((x) => x.series.some((y) => y.id === id));
+        const serie = e.series.find((y) => y.id === id);
+        const temPlano = !!(e.plano_exercicio_id && s.semana && e.tipo_registo !== 'resistencia');
+        // Série com dados registados (concluída) → pede confirmação; senão elimina logo, com "Anular".
+        if (serie.estado === 'feita') {
+          dialogo('Eliminar série', html`<p>Eliminar a série ${serie.n} de <strong>${e.nome}</strong> (${textoSerie(serie)})? Deixa de contar para volume, 1RM e recordes.</p>
+            ${temPlano ? campo('plano', 'Remover também do plano (semana ' + s.semana + ')', { tipo: 'checkbox' }) : ''}`, {
+            textoOk: 'Eliminar', perigo: true,
+            onSubmit(form) { aplicarEliminacao(e, id, temPlano && form.plano?.checked); },
+          });
+          return;
+        }
+        return aplicarEliminacao(e, id, false, temPlano);
+      }
       case 'reabrir':
         rs.reabrirSerie(+b.dataset.serie);
         ui.sexAtual = s.exercicios.find((x) => x.series.some((y) => y.id === +b.dataset.serie))?.id ?? ui.sexAtual;
@@ -643,6 +794,7 @@ function vistaEdicao(el, s) {
   const recarregar = () => vistaSessao(el, { sessaoId: s.id });
   const res = s.exercicios.length ? rs.resumoSessao(s) : null;
   const hora = s.hora_inicio ? s.hora_inicio.slice(11, 16) : '';
+  const rot = rotulosGrupos(s.exercicios);
 
   el.innerHTML = html`
     ${cabecalho(`${TIPOS_SESSAO[s.tipo]} · ${data(s.data)}`, { voltar: `/cliente/${s.cliente_id}?tab=sessoes` })}
@@ -683,7 +835,7 @@ function vistaEdicao(el, s) {
 
     ${s.estado === 'realizada' ? html`
       ${s.exercicios.map((e) => html`<div class="cartao">
-        <div class="cartao-cab"><h3>${e.nome}</h3>
+        <div class="cartao-cab"><h3>${rot.get(e.id) ? html`<span class="rotulo-grupo" title="Supersérie">${rotulo(rot.get(e.id))}</span> ` : ''}${e.nome}</h3>
           <div class="botoes">
             <button class="btn btn-sec btn-peq" data-acao="substituir" data-sex="${e.id}">⇄</button>
             <button class="btn btn-sec btn-peq" data-acao="remover-ex" data-sex="${e.id}" aria-label="Remover">✕</button>
@@ -778,7 +930,7 @@ function vistaEdicao(el, s) {
 
 function linhaSerieEdicao(x, e) {
   const resist = e.tipo_registo === 'resistencia';
-  const r = !resist && x.qualidade >= 1 && x.estado === 'feita' ? epley(x.carga_kg, x.reps) : null;
+  const r = !resist && x.qualidade >= 1 && !x.aquecimento && x.estado === 'feita' ? epley(x.carga_kg, x.reps) : null;
   const txt = resist
     ? [x.duracao_seg ? tempo(x.duracao_seg) : null, x.distancia_m ? `${num(x.distancia_m / 1000, 2)} km` : null, x.fc_media ? `${x.fc_media} bpm` : null, x.rpe ? `RPE ${num(x.rpe)}` : null].filter(Boolean).join(' · ') || '—'
     : textoSerie(x);
@@ -786,6 +938,7 @@ function linhaSerieEdicao(x, e) {
     <span class="n">${x.estado === 'feita' ? '✓' : x.estado === 'saltada' ? '—' : '○'} ${x.n}</span>
     <span>${x.estado === 'saltada' ? 'saltada' : txt}${r ? html` <small>· 1RM ${num(r.valor)}</small>` : ''}
       ${textoPlano(x) ? html`<br><small>plano: ${textoPlano(x)}</small>` : ''}
+      ${x.aquecimento ? html` <span class="tag">aquec.</span>` : ''}
       ${x.dor ? html` <span class="tag tag-alerta">dor${x.dor_local ? `: ${x.dor_local}` : ''}</span>` : ''}
       ${x.etiquetas.length ? html` ${x.etiquetas.map((t) => etiqueta(t))}` : ''}
       ${x.notas ? html`<br><small>${x.notas}</small>` : ''}</span><span class="n">✎</span></button>`;
@@ -807,7 +960,8 @@ function dialogoSerie(x, e, recarregar) {
             ${campo('reps', 'Reps', { tipo: 'number', valor: x.reps, attrs: 'inputmode="numeric"' })}
             ${campo('rpe', 'RPE', { tipo: 'number', valor: x.rpe })}
             ${campo('rir', 'RIR', { tipo: 'number', valor: x.rir, attrs: 'inputmode="numeric"' })}</div>
-          ${campo('qualidade', 'Qualidade técnica', { tipo: 'select', valor: x.qualidade, opcoes: [[2, '2 · boa'], [1, '1 · aceitável'], [0, '0 · falha (não conta para PR)']] })}`}
+          ${campo('qualidade', 'Qualidade técnica', { tipo: 'select', valor: x.qualidade, opcoes: [[2, '2 · boa'], [1, '1 · aceitável'], [0, '0 · falha (não conta para PR)']] })}
+          ${campo('aquecimento', 'Série de aquecimento (não conta para volume, recordes nem 1RM)', { tipo: 'checkbox', valor: x.aquecimento })}`}
       ${campo('dor_chk', 'Dor nesta série', { tipo: 'checkbox', valor: x.dor })}
       ${campo('dor_local', 'Onde', { valor: x.dor_local })}
       ${campo('notas', 'Nota da série', { valor: x.notas })}
@@ -816,7 +970,7 @@ function dialogoSerie(x, e, recarregar) {
       onSubmit(form) {
         const f = lerForm(form);
         const r = validarSerie({
-          carga_kg: lerNum(f.carga_kg), reps: lerNum(f.reps), rpe: lerNum(f.rpe), rir: lerNum(f.rir), qualidade: f.qualidade != null ? +f.qualidade : 2,
+          carga_kg: lerNum(f.carga_kg), reps: lerNum(f.reps), rpe: lerNum(f.rpe), rir: lerNum(f.rir), qualidade: f.qualidade != null ? +f.qualidade : 2, aquecimento: f.aquecimento,
           dor: f.dor_chk ? 1 : 0, dor_local: f.dor_local?.trim() || null, notas: f.notas?.trim() || null,
           duracao_txt: f.duracao, distancia_km: lerNum(f.distancia), fc_media: lerNum(f.fc_media),
         }, resist);

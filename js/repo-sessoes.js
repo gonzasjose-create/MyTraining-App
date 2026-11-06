@@ -1,7 +1,7 @@
 // Registo de sessões — ÚNICA fonte de verdade do realizado.
 // O registo manual (depois da sessão) e o Modo Treino (em tempo real) usam estas mesmas funções.
 import { todos, um, escalar, executar, inserir, atualizar, transacao, gravarAgora } from './db.js';
-import { obterPlano } from './repo-planos.js';
+import { obterPlano, moverEmGrupos, apagarComGrupos, ligarAoSeguinte, desligarDoSeguinte, definirDescansosGrupo } from './repo-planos.js';
 import { pacoteParaData } from './repo-pacotes.js';
 import { textoPrescricao } from './progressao.js';
 import { epley } from './calc.js';
@@ -75,6 +75,7 @@ function gerarDoPlano(sessaoId, planoId, planoSessaoId, semana, { marcarFeitas =
   ps.exercicios.forEach((pe, i) => {
     const sexId = inserir('sessao_exercicios', {
       sessao_id: sessaoId, exercicio_id: pe.exercicio_id, plano_exercicio_id: pe.id, ordem: i, estado: marcarFeitas ? 'feito' : 'pendente',
+      grupo_id: pe.grupo_id ?? null, descanso_apos_seg: pe.descanso_apos_seg ?? null,
     });
     const pr = pe.presc[semana] || {};
     const est = marcarFeitas ? 'feita' : 'pendente';
@@ -226,7 +227,7 @@ export function historicoExercicio(clienteId, exercicioId, excluirSessaoId = nul
   const series = todos(
     `SELECT y.*, s.data, s.id AS sessao_id FROM sessao_series y
      JOIN sessao_exercicios x ON x.id = y.sessao_exercicio_id JOIN sessoes s ON s.id = x.sessao_id
-     WHERE s.cliente_id = ? AND x.exercicio_id = ? AND s.estado = 'realizada' AND y.estado = 'feita' AND s.id <> ?
+     WHERE s.cliente_id = ? AND x.exercicio_id = ? AND s.estado = 'realizada' AND y.estado = 'feita' AND y.aquecimento = 0 AND s.id <> ?
      ORDER BY s.data DESC, s.hora_inicio DESC, y.n`,
     [clienteId, exercicioId, excluirSessaoId ?? 0]
   );
@@ -306,6 +307,42 @@ export function apagarSerie(id) {
     atualizarEstadoExercicio(sexId);
   }));
 }
+// Eliminar uma série no Modo Treino, com "Anular". Devolve uma cópia completa (série + etiquetas)
+// para poder repô-la tal e qual. As restantes séries são renumeradas. Uma série eliminada deixa de
+// existir: não conta para volume, 1RM, PRs, análise nem relatórios (todos são calculados das séries).
+export function eliminarSerie(id) {
+  const serie = um('SELECT * FROM sessao_series WHERE id = ?', [id]);
+  if (!serie) return null;
+  const etiquetas = todos('SELECT * FROM sessao_etiquetas WHERE serie_id = ?', [id]);
+  apagarSerie(id);
+  return { serie, etiquetas };
+}
+export function anularEliminacao({ serie, etiquetas }) {
+  return gravado(transacao(() => {
+    // Abre espaço na numeração e repõe a série no mesmo lugar (e com o mesmo id).
+    executar('UPDATE sessao_series SET n = n + 1 WHERE sessao_exercicio_id = ? AND n >= ?', [serie.sessao_exercicio_id, serie.n]);
+    inserir('sessao_series', serie);
+    for (const t of etiquetas) inserir('sessao_etiquetas', t);
+    atualizarEstadoExercicio(serie.sessao_exercicio_id);
+  }));
+}
+// "Remover também do plano": tira (delta -1) ou repõe (+1) uma série na prescrição dessa semana.
+// O plano nunca fica com 0 séries.
+export function ajustarSeriesPlano(sexId, delta) {
+  const r = um(
+    `SELECT x.plano_exercicio_id, s.semana FROM sessao_exercicios x JOIN sessoes s ON s.id = x.sessao_id WHERE x.id = ?`,
+    [sexId]
+  );
+  if (!r?.plano_exercicio_id || !r.semana) return false;
+  const res = executar(
+    'UPDATE plano_prescricoes SET series = series + ? WHERE plano_exercicio_id = ? AND semana = ? AND series + ? >= 1',
+    [delta, r.plano_exercicio_id, r.semana, delta]
+  );
+  gravarAgora();
+  return res.alteradas > 0;
+}
+export const seriesDoExercicio = (sexId) => escalar('SELECT COUNT(*) FROM sessao_series WHERE sessao_exercicio_id = ?', [sexId]);
+
 export function saltarExercicio(sexId) {
   return gravado(transacao(() => {
     executar("UPDATE sessao_series SET estado = 'saltada' WHERE sessao_exercicio_id = ? AND estado = 'pendente'", [sexId]);
@@ -333,16 +370,13 @@ export function substituirExercicio(sexId, novoExercicioId) {
     executar("UPDATE sessao_series SET carga_kg = NULL WHERE sessao_exercicio_id = ? AND estado = 'pendente'", [sexId]);
   }));
 }
-export const moverExercicioSessao = (sexId, dir) => {
-  const sx = um('SELECT * FROM sessao_exercicios WHERE id = ?', [sexId]);
-  const ids = todos('SELECT id FROM sessao_exercicios WHERE sessao_id = ? ORDER BY ordem, id', [sx.sessao_id]).map((r) => r.id);
-  const i = ids.indexOf(sexId), j = i + dir;
-  if (j < 0 || j >= ids.length) return;
-  [ids[i], ids[j]] = [ids[j], ids[i]];
-  transacao(() => ids.forEach((x, k) => executar('UPDATE sessao_exercicios SET ordem = ? WHERE id = ?', [k, x])));
-  gravarAgora();
-};
-export const apagarExercicioSessao = (sexId) => gravado(executar('DELETE FROM sessao_exercicios WHERE id = ?', [sexId]));
+// Mover sem partir superséries: dentro do grupo troca de lugar; na fronteira move o grupo inteiro.
+export const moverExercicioSessao = (sexId, dir) => gravado(moverEmGrupos('sessao_exercicios', sexId, dir));
+export const apagarExercicioSessao = (sexId) => gravado(apagarComGrupos('sessao_exercicios', sexId));
+// Superséries no próprio treino (mesma lógica do plano; os dados continuam por exercício).
+export const ligarExercicioAoSeguinte = (sexId) => gravado(ligarAoSeguinte('sessao_exercicios', sexId));
+export const desligarExercicioDoSeguinte = (sexId) => gravado(desligarDoSeguinte('sessao_exercicios', sexId));
+export const descansosGrupoSessao = (sessaoId, grupo, intra, ronda) => gravado(definirDescansosGrupo('sessao_exercicios', sessaoId, grupo, intra, ronda));
 export const notaExercicio = (sexId, notas) => gravado(atualizar('sessao_exercicios', sexId, { notas: notas || null }));
 
 export function alternarEtiqueta(sessaoId, etiqueta, { sexId = null, serieId = null } = {}) {
@@ -386,7 +420,9 @@ export function resumoSessao(s) {
       total++;
       if (x.estado !== 'feita') continue;
       feitas++;
-      if (x.carga_kg && x.reps) volume += x.carga_kg * x.reps;
+      // Aquecimento: conta como série feita, mas não entra em volume, RPE médio nem recordes.
+      if (x.aquecimento) continue;
+      if (x.carga_kg && x.reps && x.qualidade >= 1) volume += x.carga_kg * x.reps;
       if (x.rpe) { rpeSoma += x.rpe; rpeN++; }
       const r = x.qualidade >= 1 ? epley(x.carga_kg, x.reps) : null;
       if (r && melhor && r.valor > melhor.valor && (!melhorAqui || r.valor > melhorAqui.valor)) melhorAqui = { ...r, carga: x.carga_kg, reps: x.reps };
@@ -447,7 +483,7 @@ export function realizadoPlanoExercicio(peId, semana) {
   return todos(
     `SELECT y.carga_kg, y.reps, y.rpe, y.qualidade FROM sessao_series y
      JOIN sessao_exercicios x ON x.id = y.sessao_exercicio_id JOIN sessoes s ON s.id = x.sessao_id
-     WHERE x.plano_exercicio_id = ? AND s.semana = ? AND s.estado = 'realizada' AND y.estado = 'feita'
+     WHERE x.plano_exercicio_id = ? AND s.semana = ? AND s.estado = 'realizada' AND y.estado = 'feita' AND y.aquecimento = 0
        AND x.substitui_exercicio_id IS NULL`,
     [peId, semana]
   );

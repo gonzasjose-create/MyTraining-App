@@ -7,6 +7,7 @@ import { DIAS_SEMANA, ESTADOS_PLANO, TIPOS_SESSAO_RESIST, METODOS } from '../cat
 import { html, raw, data, num, tempo, lerTempo, Validador, mostrarErros, lerForm, aviso } from '../util.js';
 import { cabecalho, etiqueta, dialogo, confirmar, campo, vazio } from './ui.js';
 import { dialogoEscolherExercicio } from './escolher-exercicio.js';
+import { rotulosGrupos, rotulo, membrosGrupo, nomeGrupo } from '../superseries.js';
 import { ir } from '../app.js';
 
 const somarDias = (iso, dias) => {
@@ -155,6 +156,27 @@ export function vistaPlano(el, { planoId, semana }) {
   el.querySelectorAll('[data-add-ex]').forEach((b) => (b.onclick = () => dialogoEscolherExercicioPlano(plano, sessao(+b.dataset.addEx), sem, recarregar)));
   el.querySelectorAll('[data-pe]').forEach((b) => (b.onclick = () => dialogoPrescricao(plano, { pe: pe(+b.dataset.pe) }, sem, recarregar)));
   el.querySelectorAll('[data-pe-mover]').forEach((b) => (b.onclick = () => { rp.moverExercicio(+b.dataset.peMover, +b.dataset.dir); recarregar(); }));
+  // ---- Superséries
+  el.querySelectorAll('[data-ligar]').forEach((b) => (b.onclick = async () => {
+    const a = pe(+b.dataset.ligar);
+    const lista = plano.sessoes.find((x) => x.id === a.sessao_id).exercicios;
+    const seg = lista[lista.indexOf(a) + 1];
+    if (!(await confirmarLigacao([a, seg].filter((x) => avisos[x.id]).map((x) => ({ nome: x.nome, nivel: avisos[x.id].nivel }))))) return;
+    rp.ligarAoSeguinte('plano_exercicios', a.id);
+    aviso(`${a.nome} + ${seg.nome} ligados: alternam série a série.`);
+    recarregar();
+  }));
+  el.querySelectorAll('[data-grupo-cfg]').forEach((b) => (b.onclick = () => {
+    const a = pe(+b.dataset.grupoCfg);
+    const lista = plano.sessoes.find((x) => x.id === a.sessao_id).exercicios;
+    const membros = membrosGrupo(lista, a.grupo_id);
+    const seg = lista[lista.indexOf(a) + 1];
+    dialogoDescansosGrupo({
+      membros, entre: [a, seg],
+      onGuardar: (intra, ronda) => { rp.definirDescansosGrupo('plano_exercicios', a.sessao_id, a.grupo_id, intra, ronda); recarregar(); },
+      onDesligar: () => { rp.desligarDoSeguinte('plano_exercicios', a.id); aviso(`${a.nome} e ${seg.nome} já não estão ligados.`); recarregar(); },
+    });
+  }));
   el.querySelectorAll('[data-trocar]').forEach((b) => (b.onclick = () => {
     rp.trocarExercicio(+b.dataset.trocar, +b.dataset.alt);
     aviso(`Trocado por ${b.dataset.nome}.`);
@@ -162,7 +184,20 @@ export function vistaPlano(el, { planoId, semana }) {
   }));
 }
 
+// Entre dois exercícios: "ligar em supersérie" ou, se já ligados, o resumo do grupo (toque = descansos / desligar).
+function ligacao(e, seg, r, lista) {
+  if (r && seg.grupo_id === e.grupo_id) {
+    const membros = membrosGrupo(lista, e.grupo_id);
+    const ultimo = membros[membros.length - 1];
+    return html`<li class="ligacao ligado"><button type="button" class="btn-ligacao" data-grupo-cfg="${e.id}">
+      ⛓ ${nomeGrupo(membros.length)} ${r.letra} · ${e.descanso_apos_seg ? `${tempo(e.descanso_apos_seg)} entre exercícios` : 'sem descanso entre exercícios'}
+      · ronda ${ultimo.descanso_apos_seg != null ? tempo(ultimo.descanso_apos_seg) : 'descanso do último'}</button></li>`;
+  }
+  return html`<li class="ligacao"><button type="button" class="btn-ligacao" data-ligar="${e.id}" aria-label="Ligar ${e.nome} e ${seg.nome} em supersérie">⛓ ligar em supersérie</button></li>`;
+}
+
 function blocoSessao(s, i, plano, sem, avisos) {
+  const rotulos = rotulosGrupos(s.exercicios);
   return html`<div class="cartao sessao">
     <div class="cartao-cab">
       <h3>${s.nome}${s.dia_semana ? html` <small>· ${DIAS_SEMANA[s.dia_semana]}</small>` : ''}</h3>
@@ -176,10 +211,12 @@ function blocoSessao(s, i, plano, sem, avisos) {
     <ol class="lista-ex">
       ${s.exercicios.map((e, j) => {
         const a = avisos[e.id];
-        return html`<li class="${a ? (a.nivel === 'evitar' ? 'ex-contra' : 'ex-adaptar') : ''}">
+        const r = rotulos.get(e.id);
+        const seg = s.exercicios[j + 1];
+        return html`<li class="${a ? (a.nivel === 'evitar' ? 'ex-contra' : 'ex-adaptar') : ''} ${r ? 'em-grupo' : ''}">
           <div class="ex-linha">
             <button class="ex-principal" data-pe="${e.id}">
-              <strong>${e.nome}</strong>${e.ex_ativo ? '' : html` <span class="tag tag-aviso">inativo</span>`}
+              <strong>${r ? html`<span class="rotulo-grupo">${rotulo(r)}</span> ` : ''}${e.nome}</strong>${e.ex_ativo ? '' : html` <span class="tag tag-aviso">inativo</span>`}
               <span class="${e.presc[sem] ? '' : 'ajuda'}">${textoPrescricao(e.presc[sem], e, e.metodo)}</span>
               ${e.metodo !== 'manual' ? html`<small>${e.metodo === 'dupla' ? 'dupla progressão' : e.metodo === 'percentagem' ? `+${num(e.params.pct ?? rp.cfgProgressao().pct_carga)}%/semana` : '+volume/semana'}</small>` : ''}
               ${e.notas ? html`<small>${e.notas}</small>` : ''}
@@ -196,11 +233,39 @@ function blocoSessao(s, i, plano, sem, avisos) {
                 ? html`<div class="botoes">${a.alternativas.map((alt) => html`<button class="btn btn-peq" data-trocar="${e.id}" data-alt="${alt.id}" data-nome="${alt.nome}">Trocar por ${alt.nome}</button>`)}</div>`
                 : html`<div class="ajuda">Sem alternativas seguras na biblioteca.</div>`}
             </div>` : ''}
-        </li>`;
+        </li>${seg ? ligacao(e, seg, r, s.exercicios) : ''}`;
       })}
     </ol>
     <button class="btn btn-sec btn-peq" data-add-ex="${s.id}">+ Exercício</button>
   </div>`;
+}
+
+// ---------------------------------------------------------------- Superséries (também usados no Modo Treino)
+// Aviso antes de ligar exercícios contraindicados/a adaptar para o cliente.
+export async function confirmarLigacao(contra) {
+  if (!contra.length) return true;
+  return confirmar(
+    `Atenção: ${contra.map((x) => `${x.nome} (${x.nivel === 'evitar' ? 'contraindicado' : 'adaptar'})`).join(' e ')} para este cliente. Numa supersérie há menos descanso — ligar mesmo assim?`,
+    { textoOk: 'Ligar mesmo assim' }
+  );
+}
+const DESC_INTRA = [['', 'Sem descanso'], [10, '0:10'], [15, '0:15'], [20, '0:20'], [30, '0:30'], [45, '0:45'], [60, '1:00'], [90, '1:30']];
+export function dialogoDescansosGrupo({ membros, entre, onGuardar, onDesligar }) {
+  const ultimo = membros[membros.length - 1];
+  const intra = membros[0].descanso_apos_seg ?? '';
+  const d = dialogo(
+    `${nomeGrupo(membros.length)}: ${membros.map((m) => m.nome).join(' + ')}`,
+    html`<p class="ajuda">Alterna série a série (${membros.map((m, i) => `${i + 1}.ª ${m.nome}`).join(' → ')}) e repete a ronda. Cada exercício mantém as suas séries e cargas; se um tiver mais séries, continua sozinho.</p>
+      ${campo('intra', 'Descanso entre exercícios da ronda', { tipo: 'select', valor: intra, opcoes: DESC_INTRA })}
+      ${campo('ronda', 'Descanso no fim de cada ronda', { tipo: 'select', valor: ultimo.descanso_apos_seg ?? '', opcoes: [['', `O descanso de ${ultimo.nome}`], ...DESCANSOS.slice(1)] })}
+      <button type="button" class="btn btn-sec btn-peq" id="desligar">Desligar ${entre[0].nome} de ${entre[1].nome}</button>`,
+    {
+      onSubmit(form) {
+        onGuardar(form.intra.value ? +form.intra.value : null, form.ronda.value ? +form.ronda.value : null);
+      },
+    }
+  );
+  d.querySelector('#desligar').onclick = () => { d.fechar(); onDesligar(); };
 }
 
 // ---------------------------------------------------------------- Sessão

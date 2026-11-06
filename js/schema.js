@@ -478,4 +478,25 @@ export const MIGRACOES = [
   );
   CREATE INDEX idx_fotos_cliente ON fotos(cliente_id, data);
   `,
+
+  // ---- v7: superséries (tri-séries, circuitos) e séries de aquecimento ----
+  // Exercícios SEGUIDOS na mesma sessão com o mesmo grupo_id formam uma supersérie; a ordem dentro
+  // do grupo é a ordem dos exercícios. Cada exercício mantém as suas séries, cargas e descanso.
+  // descanso_apos_seg: descanso depois deste exercício dentro da ronda (no último = descanso após a ronda).
+  `
+  ALTER TABLE plano_exercicios ADD COLUMN grupo_id INTEGER;
+  ALTER TABLE plano_exercicios ADD COLUMN descanso_apos_seg INTEGER;
+  ALTER TABLE sessao_exercicios ADD COLUMN grupo_id INTEGER;
+  ALTER TABLE sessao_exercicios ADD COLUMN descanso_apos_seg INTEGER;
+  -- Série de aquecimento: fica registada, mas não conta para volume, recordes, 1RM, análise nem relatórios.
+  ALTER TABLE sessao_series ADD COLUMN aquecimento INTEGER NOT NULL DEFAULT 0;
+  `,
+
+  // ---- v8: exercícios com peso corporal (relatório semanal) ----
+  // peso_corporal_pct: % do peso do cliente que o exercício desloca (pull-up ≈ 100%, flexões ≈ 65%).
+  // Só entra no volume em kg se a opção estiver ligada nas Definições; senão contam séries e repetições.
+  // Os valores por defeito são aplicados pela biblioteca (seed.js, versão 3).
+  `
+  ALTER TABLE exercicios ADD COLUMN peso_corporal_pct REAL;
+  `,
 ];

@@ -110,6 +110,7 @@ export function dialogoExercicio(id, depois) {
       <div class="grelha-2">
         ${campo('tipo_registo', 'Como se prescreve', { tipo: 'select', valor: e?.tipo_registo || 'forca', opcoes: [['forca', 'Séries · reps · carga'], ['resistencia', 'Duração · zona · ritmo']] })}
         <div id="w-ritmo">${campo('unidade_ritmo', 'Ritmo em', { tipo: 'select', valor: e?.unidade_ritmo ?? '', opcoes: [['', 'Sem ritmo'], ['km', 'min/km'], ['500m', 'min/500 m']] })}</div>
+        <div id="w-pc">${campo('peso_corporal_pct', 'Peso corporal (% do peso do cliente)', { tipo: 'number', valor: e?.peso_corporal_pct ?? '', attrs: 'inputmode="numeric" placeholder="ex.: 100"', ajuda: 'Só para exercícios com o próprio peso (pull-up ≈ 100, flexões ≈ 65). Usado no volume se ativares essa opção nas Definições.' })}</div>
       </div>
       ${campo('notas_tecnicas', 'Notas técnicas', { tipo: 'textarea', valor: e?.notas_tecnicas })}
       <div class="campo"><label>Alternativas <small>(sugeridas quando este exercício está contraindicado)</small></label>
@@ -129,6 +130,7 @@ export function dialogoExercicio(id, depois) {
         const nome = v.texto('nome', f.nome, { obrigatorio: true, max: 80, nome: 'Nome' });
         if (nome && escalar('SELECT COUNT(*) FROM exercicios WHERE nome = ? COLLATE NOCASE AND id <> ?', [nome, id ?? 0]))
           v.erro('nome', 'Já existe um exercício com este nome.');
+        const pcPct = f.tipo_registo === 'forca' ? v.numero('peso_corporal_pct', f.peso_corporal_pct, { min: 5, max: 150, nome: 'Peso corporal', unidade: '%' }) : null;
         let padrao_id = f.padrao_id ? +f.padrao_id || null : null;
         if (f.padrao_id === 'novo') {
           const np = v.texto('novo_padrao', f.novo_padrao, { obrigatorio: true, max: 60, nome: 'Nome do padrão' });
@@ -140,6 +142,7 @@ export function dialogoExercicio(id, depois) {
           nome, categoria: f.categoria, grupo_muscular: v.texto('grupo_muscular', f.grupo_muscular, { max: 60 }), padrao_id,
           tipo_registo: f.tipo_registo, unidade_ritmo: f.tipo_registo === 'resistencia' ? f.unidade_ritmo || null : null,
           notas_tecnicas: v.texto('notas_tecnicas', f.notas_tecnicas),
+          peso_corporal_pct: pcPct,
         };
         if (e) dados.ativo = f.ativo;
         const alternativas = Object.keys(f).filter((k) => k.startsWith('alt_') && f[k]).map((k) => +k.slice(4));
@@ -153,6 +156,7 @@ export function dialogoExercicio(id, depois) {
   const sync = () => {
     d.querySelector('#w-novo-padrao').hidden = form.padrao_id.value !== 'novo';
     d.querySelector('#w-ritmo').hidden = form.tipo_registo.value !== 'resistencia';
+    d.querySelector('#w-pc').hidden = form.tipo_registo.value !== 'forca';
   };
   form.padrao_id.onchange = form.tipo_registo.onchange = sync;
   sync();
